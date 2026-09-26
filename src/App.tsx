@@ -4765,6 +4765,10 @@ function militaryStatusText(player: CareerPlayerState): string {
   return "미필";
 }
 
+function isFirstTeamAwardEligible(player: CareerPlayerState): boolean {
+  return player.status === "1군" && player.militaryStatus !== "serving";
+}
+
 function isUserManagedPlayer(player: CareerPlayerState, userTeamId: TeamId | undefined): boolean {
   if (!userTeamId) return false;
   return player.originalTeamId === userTeamId || player.team.id === userTeamId;
@@ -4923,6 +4927,7 @@ function awardSingleRookieOfYear(
 function isRookieAwardEligible(player: CareerPlayerState, year: number): boolean {
   if (player.eventKeys.includes("rookie-award")) return false;
   if (player.status === "방출" || player.status === "은퇴" || player.status === "해외진출") return false;
+  if (player.militaryStatus === "serving") return false;
   const debutYear = firstDebutYear(player);
   const noPreviousDebut = debutYear === undefined || debutYear === year;
   return player.yearsPro <= 3 || noPreviousDebut;
@@ -6973,7 +6978,7 @@ function selectAllStarSlot(
 
 function isDraftedAllStarEligible(player: CareerPlayerState, division: "드림" | "나눔", slot: string): boolean {
   if (allStarDivisionForTeam(player.team.id) !== division) return false;
-  if (player.status !== "1군" || player.currentOverall < 76) return false;
+  if (!isFirstTeamAwardEligible(player) || player.currentOverall < 76) return false;
   return matchesAllStarSlot(player.prospect.primaryPosition, slot);
 }
 
@@ -7333,6 +7338,7 @@ function awardedExistingSlotsForCategory(rows: YearlyAwardRow[], category: strin
 function chooseRookieAwardRow(players: CareerPlayerState[], teams: Team[], seasonYear: number, yearIndex: number): YearlyAwardRow | undefined {
   const winner = players
     .filter((player) => player.careerLog.some((entry) => entry.year === yearIndex && entry.type === "신인왕 수상"))
+    .filter((player) => isFirstTeamAwardEligible(player))
     .sort((left, right) => right.currentOverall - left.currentOverall || left.pick.overall - right.pick.overall)[0];
   if (!winner) return undefined;
   const team = teams.find((candidate) => candidate.id === winner.team.id);
@@ -7352,6 +7358,7 @@ function chooseMvpFromGoldGloveRows(rows: YearlyAwardRow[], players: CareerPlaye
     .filter((row) => row.category.startsWith("골든글러브") && row.playerId)
     .map((row) => players.find((player) => player.playerId === row.playerId))
     .filter((player): player is CareerPlayerState => Boolean(player))
+    .filter((player) => isFirstTeamAwardEligible(player))
     .sort((left, right) => awardFitScore(right, "MVP") - awardFitScore(left, "MVP"));
   const winner = goldGloveWinners[0];
   if (!winner) return undefined;
@@ -7393,7 +7400,7 @@ function existingAwardFitScore(player: ExistingLeaguePlayer, category: string): 
 
 function isDraftedPlayerAwardEligible(player: CareerPlayerState, category: string, yearIndex: number): boolean {
   if (player.status === "방출" || player.status === "은퇴" || player.status === "해외진출") return false;
-  if (!player.debuted || player.status !== "1군") return false;
+  if (!player.debuted || !isFirstTeamAwardEligible(player)) return false;
   if (player.yearsSinceDraft > yearIndex + 1) return false;
 
   const pitcherTitle = ["다승왕", "평균자책점왕", "탈삼진왕", "홀드왕", "세이브왕"].includes(category);
@@ -8156,7 +8163,7 @@ function advanceCareerPlayer(
     );
   }
 
-  if (next.yearsPro <= 3 && next.overall >= 72 && next.debuted && (next.eventKeys.includes("rookie-standout") || next.overall >= 75) && !next.eventKeys.includes("rookie-candidate") && Math.random() < rookieCandidateChance(next)) {
+  if (next.yearsPro <= 3 && next.overall >= 72 && next.debuted && isFirstTeamAwardEligible(next) && (next.eventKeys.includes("rookie-standout") || next.overall >= 75) && !next.eventKeys.includes("rookie-candidate") && Math.random() < rookieCandidateChance(next)) {
     next.eventKeys = [...next.eventKeys, "rookie-candidate"];
     addCareerNews(news, next, year, 4, "신인왕 후보", `${next.prospect.name}, 신인왕 후보 급부상`, "전반기 활약만 놓고 보면 신인왕 레이스에 이름을 올릴 만하다는 평가가 나온다.", context);
   }
@@ -8174,14 +8181,14 @@ function advanceCareerPlayer(
 
   const goldGloveThreshold = next.yearsPro <= 1 ? 90 : next.yearsPro <= 2 ? 86 : next.yearsPro <= 4 ? 82 : 78;
   const goldGloveChance = next.yearsPro <= 1 ? 0.004 : next.yearsPro <= 2 ? 0.01 : next.yearsPro <= 4 ? 0.025 : 0.08;
-  if (next.overall >= goldGloveThreshold && next.status === "1군" && !next.eventKeys.includes("gold-glove") && Math.random() < goldGloveChance) {
+  if (next.overall >= goldGloveThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes("gold-glove") && Math.random() < goldGloveChance) {
     next.eventKeys = [...next.eventKeys, "gold-glove"];
     addCareerNews(news, next, year, 4, "골든글러브", `${next.prospect.name}, 골든글러브 경쟁권 진입`, "수비와 공격 기여가 동시에 올라오며 리그 정상급 후보로 거론되기 시작했다.", context);
   }
 
   const mvpThreshold = next.yearsPro <= 1 ? 94 : next.yearsPro <= 2 ? 91 : next.yearsPro <= 4 ? 88 : 84;
   const mvpChance = next.yearsPro <= 1 ? 0.0015 : next.yearsPro <= 2 ? 0.004 : next.yearsPro <= 4 ? 0.012 : 0.055;
-  if (next.overall >= mvpThreshold && next.status === "1군" && !next.eventKeys.includes("mvp") && Math.random() < mvpChance) {
+  if (next.overall >= mvpThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes("mvp") && Math.random() < mvpChance) {
     next.eventKeys = [...next.eventKeys, "mvp"];
     addCareerNews(news, next, year, 5, "MVP급 시즌", `${next.prospect.name}, MVP급 시즌`, "드래프트 당시의 불확실성을 넘어 리그 전체 판도를 흔드는 시즌을 만들고 있다.", context);
   }
