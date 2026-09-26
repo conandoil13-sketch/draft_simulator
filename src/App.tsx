@@ -4905,20 +4905,35 @@ function addSeasonSelectionHonors(
     if (!player || player.transactionLog.some((item) => item === row.note)) return;
     const result = nationalTeamResultFromNote(row.note);
     player.transactionLog = [...player.transactionLog, row.note];
-    if (nationalTeamResultGrantsMilitaryExemption(tournament.name, result)) {
+    const grantsExemption = nationalTeamResultGrantsMilitaryExemption(tournament.name, result);
+    const wasServingInSangmu = player.militaryStatus === "serving" && player.militaryType === "상무";
+    if (grantsExemption) {
       player.militaryStatus = "exempt";
       player.militaryType = undefined;
       player.militaryServiceUntilYear = undefined;
       player.transactionLog = [...player.transactionLog, `${seasonYear}년 ${tournament.name} ${result} 병역특례`];
+      if (wasServingInSangmu) {
+        player.transactionLog = [...player.transactionLog, `${seasonYear}년 ${tournament.name} ${result}로 상무 즉시 전역`];
+        addCareerNews(
+          news,
+          player,
+          year,
+          player.team.id === userTeamId || player.originalTeamId === userTeamId ? 5 : 4,
+          "병역 복귀",
+          `${player.prospect.name}, 대표팀 성과로 상무 즉시 전역`,
+          `${tournament.name} ${result}로 병역특례 조건을 충족하며 남은 상무 복무 일정을 마치지 않고 팀에 복귀하게 됐다.`,
+          careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds),
+        );
+      }
     }
     addCareerNews(
       news,
       player,
       year,
-      player.team.id === userTeamId || nationalTeamResultGrantsMilitaryExemption(tournament.name, result) ? 5 : 4,
+      player.team.id === userTeamId || grantsExemption ? 5 : 4,
       "국가대표 선발",
       `${player.prospect.name}, ${seasonYear} ${tournament.name} 선발`,
-      `${player.team.shortName}에서 리그 상위권 활약을 인정받아 ${tournament.name}에 합류했다. 대회 결과는 ${result}${nationalTeamResultGrantsMilitaryExemption(tournament.name, result) ? "이며 병역특례 대상이 됐다" : "로 기록됐다"}.`,
+      `${player.team.shortName}에서 리그 상위권 활약을 인정받아 ${tournament.name}에 합류했다. 대회 결과는 ${result}${grantsExemption ? wasServingInSangmu ? "이며 상무 즉시 전역과 병역특례 대상이 됐다" : "이며 병역특례 대상이 됐다" : "로 기록됐다"}.`,
       careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds),
     );
   });
@@ -6883,9 +6898,17 @@ function selectNationalTeamSlot(
 }
 
 function isDraftedNationalTeamEligible(player: CareerPlayerState, slot: string, context?: NationalTeamSelectionContext): boolean {
-  if (player.status !== "1군" || player.currentOverall < 76) return false;
+  if (!isNationalTeamMilitaryEligible(player)) return false;
+  if (player.militaryStatus !== "serving" && player.status !== "1군") return false;
+  if (player.currentOverall < 76) return false;
   if (!isAsianGamesAgeEligible(careerAge(player), context)) return false;
   return matchesNationalTeamSlot(player.prospect.primaryPosition, slot);
+}
+
+function isNationalTeamMilitaryEligible(player: CareerPlayerState): boolean {
+  if (player.militaryStatus !== "serving") return true;
+  if (player.militaryType !== "상무") return false;
+  return player.currentOverall >= 78 && player.debuted;
 }
 
 function isExistingNationalTeamEligible(player: ExistingLeaguePlayer, slot: string, context?: NationalTeamSelectionContext): boolean {
