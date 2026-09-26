@@ -2833,3 +2833,261 @@ ul {
   color: #66717d;
   padding: 8px 0;
 }
+
+@media (max-width: 1180px) {
+  :root {
+    font-size: 12px;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  .app-shell {
+    min-width: 0;
+    padding: 10px;
+    width: 100%;
+  }
+
+  .topbar,
+  .filter-head,
+  .draft-board-head,
+  .career-head,
+  .comparison-head,
+  .prospect-workspace-head,
+  .predraft-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbar-actions,
+  .prospect-workspace-actions,
+  .preset-row {
+    justify-content: flex-start;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .main-tabs,
+  .sub-tabs,
+  .modal-tabs {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .main-tabs button {
+    flex: 0 0 138px;
+  }
+
+  .sub-tabs button,
+  .modal-tabs button {
+    flex: 0 0 auto;
+  }
+
+  .team-grid,
+  .draft-dashboard,
+  .draft-board-section,
+  .draft-aid-grid,
+  .tracking-overview-grid,
+  .career-grid,
+  .team-cycle-grid,
+  .fan-metrics-grid,
+  .fan-reaction-grid,
+  .final-meeting-grid,
+  .predraft-action-board,
+  .asset-summary,
+  .tracking-workspace,
+  .tracking-control-row,
+  .modal-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .draft-command-main,
+  .career-modal-actions,
+  .team-opinion-grid,
+  .history-layout,
+  .draft-result-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .draft-command-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .predraft-stage-row {
+    grid-template-columns: repeat(3, minmax(76px, 1fr));
+  }
+
+  .fan-mock-grid,
+  .bigboard-row,
+  .recommendation-row {
+    min-width: 720px;
+  }
+
+  .standings-wrap,
+  .draft-result-table-wrap,
+  .table-zone,
+  .tracking-table-wrap,
+  .release-table-wrap,
+  .comparison,
+  .jersey-wrap {
+    max-width: 100%;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .player-detail-modal,
+  .team-select-modal {
+    max-height: calc(100dvh - 20px);
+    width: calc(100vw - 20px);
+  }
+
+  .player-detail-modal {
+    overflow: auto;
+  }
+
+  .floating-save-button {
+    bottom: 14px;
+    height: 52px;
+    right: 14px;
+    width: 52px;
+  }
+}
+
+@media (max-width: 720px) {
+  h1 {
+    font-size: 18px;
+  }
+
+  h2 {
+    font-size: 14px;
+  }
+
+  .app-shell {
+    padding: 8px;
+  }
+
+  .topbar-actions {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .primary-progress-button,
+  .quick-year-button,
+  .text-button,
+  .file-load-button {
+    min-height: 34px;
+    width: 100%;
+  }
+
+  .summary-grid,
+  .controls,
+  .metric-grid,
+  .season-cycle-summary,
+  .two-col,
+  .draft-summary-grid,
+  .draft-summary-grid.enhanced,
+  .position-count-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main-tabs button {
+    flex-basis: 124px;
+    min-height: 46px;
+    padding: 6px 8px;
+  }
+
+  .main-tabs span {
+    display: none;
+  }
+
+  .draft-command-actions,
+  .predraft-action-board,
+  .draft-aid-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .predraft-stage-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .table-zone {
+    height: clamp(360px, calc(100dvh - 220px), 560px);
+  }
+
+  .prospect-table {
+    min-width: 1700px;
+  }
+
+  .draft-result-table,
+  .tracking-table,
+  .roster-table,
+  .school-table {
+    min-width: 900px;
+  }
+
+  .standings-table,
+  .history-table,
+  .needs-table,
+  .legacy-table,
+  .award-history-table {
+    min-width: 760px;
+  }
+
+  .pick-assets-table,
+  .release-table,
+  .tracking-add-table {
+    min-width: 720px;
+  }
+
+  th,
+  td {
+    padding: 5px 6px;
+  }
+
+  .player-detail-modal,
+  .team-select-modal {
+    max-height: calc(100dvh - 12px);
+    padding: 12px;
+    width: calc(100vw - 12px);
+  }
+
+  .detail-line {
+    gap: 4px;
+  }
+
+  .modal-tabs button {
+    min-width: 104px;
+  }
+
+  .career-modal-control .nickname-editor,
+  .nickname-editor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nickname-editor input {
+    max-width: none;
+    text-align: left;
+    width: 100%;
+  }
+
+  .floating-save-button {
+    bottom: 12px;
+    height: 48px;
+    right: 12px;
+    width: 48px;
+  }
+}
