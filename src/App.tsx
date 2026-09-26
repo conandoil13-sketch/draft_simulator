@@ -3521,10 +3521,11 @@ type RosterMember = {
   playerId?: ProspectId;
   note: string;
   bullpenRole?: NonNullable<CareerPlayerState["bullpenRole"]>;
+  fieldingRole?: NonNullable<CareerPlayerState["fieldingRole"]>;
 };
 
 function RosterMemberButton({ member, onSelect }: { member: RosterMember; onSelect: (id: ProspectId) => void }) {
-  const note = member.bullpenRole ? `${member.bullpenRole} · ${member.note}` : member.note;
+  const note = member.fieldingRole ? `${member.fieldingRole} · ${member.note}` : member.bullpenRole ? `${member.bullpenRole} · ${member.note}` : member.note;
   const content = (
     <>
       <strong>{member.name}</strong>
@@ -4050,6 +4051,7 @@ function CareerPlayerModal({
           <span>{player.team.name}</span>
           <span>{player.status}</span>
           {player.bullpenRole && <span>{player.bullpenRole}</span>}
+          {player.fieldingRole && <span>{player.fieldingRole}</span>}
           <span>{player.yearsSinceDraft}년차</span>
           <span>{player.pick.round}라운드 {player.pick.overall}순위</span>
           <span>초기 OVR {player.initialOverall}</span>
@@ -6902,8 +6904,8 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
     }
     const starterCount = position === "SP" ? 5 : 1;
     const platoonCount = position === "SP" ? 3 : 2;
-    const starterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && (member.primaryPosition === position || position === "SP"));
-    const fallbackStarterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && !starterCandidates.some((candidate) => candidate.id === member.id));
+    const starterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && !member.fieldingRole && (member.primaryPosition === position || position === "SP"));
+    const fallbackStarterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && !member.fieldingRole && !starterCandidates.some((candidate) => candidate.id === member.id));
     const starters = [...starterCandidates, ...fallbackStarterCandidates].slice(0, starterCount);
     starters.forEach((member) => usedStarterIds.add(member.id));
     const starterIds = new Set(starters.map((member) => member.id));
@@ -6936,6 +6938,7 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       source: "drafted",
       playerId: player.playerId,
       bullpenRole: player.bullpenRole,
+      fieldingRole: player.fieldingRole,
       note: `${player.pick.round}R · ${player.status}`,
     }));
   const existingMembers: RosterMember[] = existingPlayersAtPosition(activeExisting, position)
@@ -7162,6 +7165,7 @@ function selectAllStarSlot(
 function isDraftedAllStarEligible(player: CareerPlayerState, division: "드림" | "나눔", slot: string): boolean {
   if (allStarDivisionForTeam(player.team.id) !== division) return false;
   if (!isFirstTeamAwardEligible(player) || player.currentOverall < 76) return false;
+  if (player.fieldingRole === "지명타자") return slot === "지명타자";
   return matchesAllStarSlot(player.prospect.primaryPosition, slot);
 }
 
@@ -7317,6 +7321,7 @@ function isDraftedNationalTeamEligible(player: CareerPlayerState, slot: string, 
   if (player.militaryStatus !== "serving" && player.status !== "1군") return false;
   if (player.currentOverall < 76) return false;
   if (!isAsianGamesAgeEligible(careerAge(player), context)) return false;
+  if (player.fieldingRole === "지명타자") return slot === "지명타자";
   return matchesNationalTeamSlot(player.prospect.primaryPosition, slot);
 }
 
@@ -7602,6 +7607,7 @@ function isDraftedPlayerAwardEligible(player: CareerPlayerState, category: strin
 function matchesGoldenGloveCategory(player: CareerPlayerState, category: string): boolean {
   if (!category.startsWith("골든글러브")) return true;
   const position = player.prospect.primaryPosition;
+  if (player.fieldingRole === "지명타자") return category === "골든글러브 지명타자";
   if (category === "골든글러브 투수") return position === "SP";
   if (category === "골든글러브 포수") return position === "C";
   if (category === "골든글러브 1루수") return position === "1B";
@@ -7657,6 +7663,7 @@ function awardFitScore(player: CareerPlayerState, category: string): number {
     const saveRoleBonus = category === "세이브왕" ? bullpenTitleBonus(player, "save") : 0;
     return pitcherScore + holdRoleBonus + saveRoleBonus;
   }
+  if (category === "골든글러브 지명타자") return pitcher ? 0 : hitterScore + (player.fieldingRole === "지명타자" ? 8 : 0);
   if (category.startsWith("골든글러브")) return player.currentOverall + (player.prospect.hitterStats?.defensiveGrade ?? player.prospect.pitcherStats?.commandGrade ?? 45) * 0.35 + (category === "골든글러브 투수" && player.prospect.primaryPosition === "SP" ? 3 : 0);
   if (category === "MVP") return player.currentOverall + (player.eventKeys.includes("mvp") ? 18 : 0);
   return pitcher ? 0 : hitterScore;
@@ -7828,8 +7835,8 @@ function advanceCareerTools(player: CareerPlayerState, cycle: SeasonCycleResult,
       command: improve("command", pitcher.command, player.prospect.trueTalent.proAdaptation >= 0.6 ? 0.7 : -0.2),
       stuff: improve("stuff", pitcher.stuff, player.prospect.trueTalent.growthRate >= 0.65 ? 0.6 : 0),
       velocity: improve("velocity", pitcher.velocity, player.yearsSinceDraft <= 3 ? 0.4 : age >= 34 ? -0.8 : -0.15),
-      stamina: improve("stamina", pitcher.stamina, player.prospect.primaryPosition === "SP" ? (age >= 35 ? -0.35 : 0.5) : -0.25),
-      mentality: improve("mentality", pitcher.mentality, player.prospect.trueTalent.workEthic >= 0.62 ? 0.55 : 0),
+      stamina: improve("stamina", pitcher.stamina, pitcherStaminaAgingBias(player, age)),
+      mentality: improve("mentality", pitcher.mentality, veteranMentalityBias(player, age)),
     };
   }
 
@@ -7837,11 +7844,47 @@ function advanceCareerTools(player: CareerPlayerState, cycle: SeasonCycleResult,
   return {
     contact: improve("contact", hitter.contact, player.prospect.trueTalent.proAdaptation >= 0.6 ? 0.55 : 0),
     discipline: improve("discipline", hitter.discipline, player.prospect.trueTalent.workEthic >= 0.62 ? 0.6 : 0),
-    speed: improve("speed", hitter.speed, player.yearsSinceDraft <= 4 ? 0.15 : age >= 32 ? -0.9 : -0.25),
+    speed: improve("speed", hitter.speed, hitterSpeedAgingBias(player, age)),
     power: improve("power", hitter.power, player.prospect.trueTalent.growthRate >= 0.62 ? 0.7 : 0),
-    defense: improve("defense", hitter.defense, ["C", "SS", "CF", "2B"].includes(player.prospect.primaryPosition) ? 0.45 : 0),
-    mentality: improve("mentality", hitter.mentality, player.prospect.trueTalent.workEthic >= 0.62 ? 0.55 : 0),
+    defense: improve("defense", hitter.defense, hitterDefenseAgingBias(player, age)),
+    mentality: improve("mentality", hitter.mentality, veteranMentalityBias(player, age)),
   };
+}
+
+function pitcherStaminaAgingBias(player: CareerPlayerState, age: number): number {
+  const starterBase = player.prospect.primaryPosition === "SP" ? 0.45 : -0.25;
+  if (age < 31) return starterBase;
+  if (age < 34) return starterBase - 0.45;
+  if (age < 37) return starterBase - 1.25;
+  if (age < 40) return starterBase - 2.05;
+  return starterBase - 2.8;
+}
+
+function hitterSpeedAgingBias(player: CareerPlayerState, age: number): number {
+  if (player.yearsSinceDraft <= 4 && age < 28) return 0.15;
+  if (age < 31) return -0.25;
+  if (age < 34) return -0.9;
+  if (age < 37) return -1.55;
+  return -2.25;
+}
+
+function hitterDefenseAgingBias(player: CareerPlayerState, age: number): number {
+  const defensivePositionBonus = ["C", "SS", "CF", "2B"].includes(player.prospect.primaryPosition) ? 0.45 : 0;
+  if (player.fieldingRole === "지명타자") return -1.4;
+  if (age < 31) return defensivePositionBonus;
+  if (age < 34) return defensivePositionBonus - 0.35;
+  if (age < 37) return defensivePositionBonus - 1.05;
+  return defensivePositionBonus - 1.75;
+}
+
+function veteranMentalityBias(player: CareerPlayerState, age: number): number {
+  const makeup = player.prospect.trueTalent.workEthic >= 0.68 ? 0.45 : player.prospect.trueTalent.workEthic <= 0.38 ? -0.15 : 0.15;
+  const adaptation = player.prospect.trueTalent.proAdaptation >= 0.62 ? 0.25 : player.prospect.trueTalent.proAdaptation <= 0.34 ? -0.1 : 0;
+  if (age < 29) return player.prospect.trueTalent.workEthic >= 0.62 ? 0.55 : 0;
+  if (age < 33) return 0.55 + makeup + adaptation;
+  if (age < 37) return 0.95 + makeup + adaptation;
+  if (age < 40) return 1.15 + makeup + adaptation;
+  return 0.75 + makeup + adaptation;
 }
 
 function developmentOutcomeBase(outcome: DevelopmentOutcome): number {
@@ -8074,6 +8117,73 @@ function agingRetirementChance(player: CareerPlayerState): number {
   return clampNumber(agePressure + lowRolePressure + eliteHold + makeup, 0.005, age >= 45 ? 0.62 : 0.42);
 }
 
+function applyAgingRoleTransition(
+  player: CareerPlayerState,
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+) {
+  if (player.status === "방출" || player.status === "은퇴" || player.status === "해외진출") return;
+  const tools = getCareerTools(player);
+  const age = careerAge(player);
+
+  if (isPitcherTools(tools) && player.prospect.primaryPosition === "SP" && !player.eventKeys.includes("starter-to-bullpen")) {
+    const stamina = tools.stamina;
+    const starterChance = player.prospect.pitcherStats?.starterChance ?? 55;
+    const rolePressure = clampNumber((age - 30) * 0.035 + Math.max(0, 56 - stamina) * 0.012 + Math.max(0, 45 - starterChance) * 0.006, 0, 0.48);
+    if (age >= 31 && stamina <= 58 && player.currentOverall >= 52 && Math.random() < rolePressure) {
+      player.prospect = {
+        ...player.prospect,
+        primaryPosition: "RP",
+        secondaryPositions: uniquePositions(["SP", ...player.prospect.secondaryPositions.filter((position) => position !== "RP")]),
+        archetype: player.prospect.archetype.includes("불펜") ? player.prospect.archetype : `${player.prospect.archetype} · 불펜 전환`,
+      };
+      player.bullpenRole = undefined;
+      player.eventKeys = [...player.eventKeys, "starter-to-bullpen"];
+      player.transactionLog = [...player.transactionLog, `${year}년차 체력 저하로 선발→불펜 전환`];
+      addCareerNews(
+        news,
+        player,
+        year,
+        4,
+        "보직 전환",
+        `${player.prospect.name}, 선발에서 불펜으로 전환`,
+        `나이와 누적 이닝 부담 속에 긴 이닝을 끌고 가는 힘이 떨어졌다. 구단은 짧은 이닝에서 구위와 경험을 살리는 방향으로 보직을 조정했다.`,
+        careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds),
+      );
+    }
+    return;
+  }
+
+  if (!isPitcherTools(tools) && !player.fieldingRole && !player.eventKeys.includes("dh-transition")) {
+    const batScore = tools.contact * 0.34 + tools.power * 0.34 + tools.discipline * 0.2 + tools.mentality * 0.12;
+    const defensivePressure = Math.max(0, 48 - tools.defense) + Math.max(0, 45 - tools.speed) * 0.75;
+    const positionPressure = ["C", "SS", "CF", "2B"].includes(player.prospect.primaryPosition) ? 0.55 : 1;
+    const chance = clampNumber((age - 31) * 0.035 + defensivePressure * 0.01 * positionPressure + (batScore >= 62 ? 0.08 : -0.04), 0, 0.44);
+    if (age >= 32 && defensivePressure >= 8 && batScore >= 56 && player.currentOverall >= 54 && Math.random() < chance) {
+      player.fieldingRole = "지명타자";
+      player.eventKeys = [...player.eventKeys, "dh-transition"];
+      player.transactionLog = [...player.transactionLog, `${year}년차 수비 부담으로 지명타자 비중 확대`];
+      addCareerNews(
+        news,
+        player,
+        year,
+        4,
+        "보직 전환",
+        `${player.prospect.name}, 지명타자 전향`,
+        `순발력과 수비 범위가 내려오면서 매일 수비를 맡기기는 어려워졌다. 대신 타격 생산력을 살리기 위해 지명타자 출전 비중을 늘리는 방향으로 역할이 바뀌었다.`,
+        careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds),
+      );
+    }
+  }
+}
+
+function uniquePositions(positions: Position[]): Position[] {
+  return Array.from(new Set(positions));
+}
+
 function developmentOutcomeLabel(outcome: DevelopmentOutcome, player?: CareerPlayerState): string {
   const years = player?.yearsSinceDraft ?? 0;
   const age = player ? careerAge(player) : 18;
@@ -8245,6 +8355,8 @@ function advanceCareerPlayer(
   if (seasonAge >= 34 && seasonCycle.totalDelta <= -2) {
     addCareerNews(news, next, year, seasonAge >= 38 || seasonCycle.totalDelta <= -4 ? 4 : 3, "에이징커브", `${next.prospect.name}, 에이징커브 징후`, `${seasonAge}세 시즌을 지나며 순발력과 회복력 저하가 수치에 반영됐다. 시즌 종료 기준 OVR 변화는 ${formatSigned(seasonCycle.totalDelta)}.`, context);
   }
+
+  applyAgingRoleTransition(next, year, userTeamId, watchedIds, nextAfterUserPickIds, news);
 
   if (next.yearsSinceDraft === 1 && seasonCycle.totalDelta >= 3) {
     addCareerNews(news, next, year, 2, "퓨처스 적응", `${next.prospect.name}, 첫해 적응 속도 양호`, "첫 프로 시즌에서 훈련 루틴과 경기 템포에 비교적 빠르게 적응하고 있다는 평가가 나왔다.", context);
