@@ -3668,9 +3668,11 @@ function createHighSchoolCumulativeStats(snapshots: HighSchoolYearSnapshot[]): {
       walksPerNine: roundTo(weighted((stats) => stats.walksPerNine) ?? 0, 1),
       whip: roundTo(weighted((stats) => stats.whip) ?? 0, 2),
       pitchCount: Math.max(...pitcherSnapshots.map((stats) => stats.pitchCount ?? 0)) || null,
+      pitchArsenal: mergePitchArsenal(pitcherSnapshots),
       commandGrade: roundGrade(weighted((stats) => stats.commandGrade) ?? 20),
       starterChance: Math.round(Math.max(...pitcherSnapshots.map((stats) => stats.starterChance ?? 0))) || null,
     };
+    pitcherStats.outPitch = strongestVisiblePitch(pitcherStats);
     return { primaryLine: highSchoolPrimarySummary({ pitcherStats }), pitcherStats };
   }
   if (hitterSnapshots.length > 0) {
@@ -4386,7 +4388,7 @@ function createScoutLegacySummary(
 }
 
 function PitcherLine({ stats }: { stats: PitcherStats }) {
-  return <p>평균자책 {formatDecimal(stats.era, 2)} · 이닝 {formatDecimal(stats.innings, 1)} · 투구폼 {armSlotLabel(stats.armSlot)} · 최고구속 {formatKph(stats.maxVelocityKph)} · 탈삼/9 {formatDecimal(stats.strikeoutsPerNine, 1)} · 볼넷/9 {formatDecimal(stats.walksPerNine, 1)} · 이닝당출루허용 {formatDecimal(stats.whip, 2)} · 구종 수 {formatNumber(stats.pitchCount)} · 결정구 {pitchLabel(stats.outPitch)}</p>;
+  return <p>평균자책 {formatDecimal(stats.era, 2)} · 이닝 {formatDecimal(stats.innings, 1)} · 투구폼 {armSlotLabel(stats.armSlot)} · 최고구속 {formatKph(stats.maxVelocityKph)} · 탈삼/9 {formatDecimal(stats.strikeoutsPerNine, 1)} · 볼넷/9 {formatDecimal(stats.walksPerNine, 1)} · 이닝당출루허용 {formatDecimal(stats.whip, 2)} · 구종 수 {formatNumber(stats.pitchCount)} · 결정구 {pitchLabel(stats.outPitch)} · 구종 {pitchArsenalLine(stats)}</p>;
 }
 
 function ToolLine({ player }: { player: CareerPlayerState }) {
@@ -4488,6 +4490,8 @@ function comparisonRows(mode: "hitter" | "pitcher" | "mixed") {
     { label: "평균 구속", value: (p: Prospect) => formatKph(p.pitcherStats?.averageVelocityKph) },
     { label: "탈삼/9", value: (p: Prospect) => formatDecimal(p.pitcherStats?.strikeoutsPerNine, 1) },
     { label: "볼넷/9", value: (p: Prospect) => formatDecimal(p.pitcherStats?.walksPerNine, 1) },
+    { label: "결정구", value: (p: Prospect) => pitchLabel(p.pitcherStats?.outPitch) },
+    { label: "구종 구성", value: (p: Prospect) => p.pitcherStats ? pitchArsenalLine(p.pitcherStats) : "-" },
     { label: "제구 등급", value: (p: Prospect) => formatNumber(p.pitcherStats?.commandGrade) },
     { label: "선발 가능성", value: (p: Prospect) => formatPercentFromWhole(p.pitcherStats?.starterChance) },
   ];
@@ -5511,13 +5515,54 @@ function handLabel(hand: "L" | "R" | "S"): string {
 function pitchLabel(pitch: PitcherStats["outPitch"] | undefined): string {
   if (!pitch) return "-";
   return {
+    "four-seam": "포심",
+    "two-seam": "투심",
     fastball: "직구",
     slider: "슬라이더",
     curveball: "커브",
     changeup: "체인지업",
     splitter: "스플리터",
+    forkball: "포크볼",
     sinker: "싱커",
+    cutter: "커터",
   }[pitch];
+}
+
+function pitchArsenalLine(stats: PitcherStats): string {
+  if (!stats.pitchArsenal || stats.pitchArsenal.length === 0) return "-";
+  return stats.pitchArsenal.map((pitch) => `${pitchLabel(pitch.type)} ${pitch.grade}`).join(" / ");
+}
+
+function mergePitchArsenal(snapshots: PitcherStats[]): PitcherStats["pitchArsenal"] {
+  const pitchMap = new Map<NonNullable<PitcherStats["outPitch"]>, number>();
+  snapshots.forEach((stats) => {
+    stats.pitchArsenal?.forEach((pitch) => {
+      pitchMap.set(pitch.type, Math.max(pitchMap.get(pitch.type) ?? 0, pitch.grade));
+    });
+  });
+  if (pitchMap.size === 0) return undefined;
+  return Array.from(pitchMap.entries())
+    .map(([type, grade]) => ({ type, grade: roundGrade(grade) }))
+    .sort((left, right) => pitchDisplayOrder(left.type) - pitchDisplayOrder(right.type));
+}
+
+function strongestVisiblePitch(stats: PitcherStats): PitcherStats["outPitch"] {
+  return [...(stats.pitchArsenal ?? [])].sort((left, right) => right.grade - left.grade)[0]?.type ?? stats.outPitch;
+}
+
+function pitchDisplayOrder(type: NonNullable<PitcherStats["outPitch"]>): number {
+  return {
+    "four-seam": 0,
+    "two-seam": 1,
+    sinker: 2,
+    cutter: 3,
+    curveball: 4,
+    slider: 5,
+    changeup: 6,
+    forkball: 7,
+    splitter: 8,
+    fastball: 9,
+  }[type];
 }
 
 function armSlotLabel(armSlot: PitcherStats["armSlot"] | undefined): string {

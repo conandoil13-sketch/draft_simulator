@@ -81,6 +81,13 @@ export type HitterStats = {
   >;
 };
 
+export type PitchType = "four-seam" | "two-seam" | "sinker" | "cutter" | "slider" | "changeup" | "splitter" | "forkball" | "curveball" | "fastball";
+
+export type PitchArsenalEntry = {
+  type: PitchType;
+  grade: Grade20to80;
+};
+
 export type PitcherStats = {
   games: number;
   armSlot: PitchingArmSlot;
@@ -92,7 +99,8 @@ export type PitcherStats = {
   walksPerNine: number | null;
   whip: number | null;
   pitchCount: number | null;
-  outPitch: "fastball" | "slider" | "curveball" | "changeup" | "splitter" | "sinker" | null;
+  outPitch: PitchType | null;
+  pitchArsenal?: PitchArsenalEntry[];
   commandGrade: Grade20to80 | null;
   starterChance: number | null;
   reliability: MetricReliability<

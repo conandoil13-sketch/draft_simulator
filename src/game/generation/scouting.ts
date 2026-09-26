@@ -177,6 +177,10 @@ function createRiskTags(rng: Rng, dataTier: ProspectDataTier, context: ScoutingC
   if (has("golden-lion-mvp") && rng.next() < 0.38) add("small-sample");
   if (has("choi-dongwon") && rng.next() < 0.42) add("injury-history");
   if (has("club-150") && (context.pitcherStats?.walksPerNine ?? 0) >= 4.0) add("command");
+  if (context.pitcherStats?.pitchArsenal?.some((pitch) => pitch.type === "forkball" || pitch.type === "splitter")) {
+    const maxForkSplitGrade = Math.max(...context.pitcherStats.pitchArsenal.filter((pitch) => pitch.type === "forkball" || pitch.type === "splitter").map((pitch) => pitch.grade));
+    if (rng.next() < (maxForkSplitGrade >= 50 ? 0.58 : 0.34)) add("injury-history");
+  }
   if ((context.draftHype ?? 0) >= 45 && rng.next() < 0.32) add("low-record-trust");
   if ((context.collegeCommitRisk ?? 0) >= 68) add("signability");
   if (context.leagueLevel === "약한 리그" || context.leagueLevel === "정보 부족") add("weak-competition");
@@ -246,6 +250,7 @@ function createWeaknesses(rng: Rng, group: PlayerGroup, tier: ProspectDataTier, 
     if ((context.pitcherStats.whip ?? 0) >= 1.45) items.push("주자 누적 위험");
     if (context.accolades?.some((accolade) => accolade.id === "choi-dongwon")) items.push("고교 단계 투구 부담 누적 여부");
     if (context.accolades?.some((accolade) => accolade.id === "club-150") && (context.pitcherStats.walksPerNine ?? 0) >= 4.0) items.push("구속 대비 제구 완성도");
+    if (context.pitcherStats.pitchArsenal?.some((pitch) => pitch.type === "forkball" || pitch.type === "splitter")) items.push("포크/스플리터 구사에 따른 팔 부담");
     if (context.physical.heightCm >= 190 && context.physical.weightKg <= 82) items.push("증량 후 밸런스 유지 확인");
     if (context.physical.heightCm <= 178 && (context.pitcherStats.maxVelocityKph ?? 0) <= 140) items.push("체격 대비 구위 상단 확인");
   }

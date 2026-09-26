@@ -1,5 +1,5 @@
 import type { Grade20to80, Position, ProspectId } from "../types/common";
-import type { DraftClassQualityProfile, HiddenTalentProfile, HighSchoolCareerLogEntry, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, MetricQuality, MonthlyFormPoint, PhysicalProfile, PitcherDevelopmentTools, PitcherStats, PitchingArmSlot, PlayerGroup, Prospect, ProspectAccolade, ProspectDataTier, ProspectRiskTag, SchoolYear, ScoutGrade, SeasonFormCycle, VisibleScoutingReport } from "../types/player";
+import type { DraftClassQualityProfile, HiddenTalentProfile, HighSchoolCareerLogEntry, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, MetricQuality, MonthlyFormPoint, PhysicalProfile, PitchArsenalEntry, PitcherDevelopmentTools, PitcherStats, PitchingArmSlot, PitchType, PlayerGroup, Prospect, ProspectAccolade, ProspectDataTier, ProspectRiskTag, SchoolYear, ScoutGrade, SeasonFormCycle, VisibleScoutingReport } from "../types/player";
 import type { SchoolProfile } from "../types/school";
 import { clamp, roundGrade, roundTo } from "../utils/math";
 import { generateKoreanName } from "./names";
@@ -323,7 +323,7 @@ function createProspect(rng: Rng, year: number, publicRank: number, school: Scho
   const primaryPosition = highSchoolSpecial ? pickHighSchoolSpecialPosition(rng, school) : pickPosition(rng, school);
   const playerGroup = POSITION_GROUPS[primaryPosition];
   const dataTier = dataTierFromPublicRank(publicRank);
-  const trueTalent = highSchoolSpecial
+  let trueTalent = highSchoolSpecial
     ? createHighSchoolSpecialTalent(rng, publicRank, dataTier, school, classQuality, primaryPosition)
     : createHiddenTalent(rng, publicRank, dataTier, school, classQuality, primaryPosition);
   const age = createAgeForSchoolYear(rng, schoolYear);
@@ -341,6 +341,7 @@ function createProspect(rng: Rng, year: number, publicRank: number, school: Scho
   const accolades = createMilestoneAccolades(publicRank, primaryPosition, specialHitterStats, specialPitcherStats, schoolYear);
   const hitterStats = specialHitterStats ? applyUnderclassHitterUsage(applyAccoladeHitterEffects(specialHitterStats, accolades), rng, schoolYear, highSchoolSpecial) : undefined;
   const pitcherStats = specialPitcherStats ? applyUnderclassPitcherUsage(applyAccoladePitcherEffects(specialPitcherStats, accolades), rng, schoolYear, highSchoolSpecial, primaryPosition) : undefined;
+  trueTalent = adjustForkSplitterInjuryRisk(trueTalent, pitcherStats);
   const collegeCommitRisk = createCollegeCommitRisk(rng, publicRank, dataTier, accolades);
   const archetype = highSchoolSpecial ? "고교특급" : createArchetype(rng, publicRank, primaryPosition, physical, trueTalent, leagueLevel, collegeCommitRisk, hitterStats, pitcherStats, accolades);
   const reputation = clamp(accolades.reduce((total, accolade) => total + accolade.reputationBoost, 0) + leagueReputationBonus(leagueLevel) + randomFloat(rng, highSchoolSpecial ? 18 : 0, highSchoolSpecial ? 34 : publicRank <= 40 ? 10 : 4), 0, 100);
@@ -1380,6 +1381,15 @@ function createRetroPitcherStats(stats: PitcherStats, schoolYear: SchoolYear): P
   if (next.walksPerNine !== null) next.walksPerNine = roundTo(clamp(next.walksPerNine + (schoolYear === 1 ? 0.7 : 0.28), 0.8, 9), 1);
   if (next.whip !== null) next.whip = roundTo(clamp(next.whip + (schoolYear === 1 ? 0.18 : 0.08), 0.68, 2.2), 2);
   if (next.pitchCount !== null) next.pitchCount = Math.max(1, next.pitchCount - (schoolYear === 1 ? 1 : 0));
+  if (next.pitchArsenal) {
+    const targetCount = next.pitchCount ?? next.pitchArsenal.length;
+    next.pitchArsenal = next.pitchArsenal
+      .map((pitch) => ({ ...pitch, grade: roundGrade(pitch.grade - (schoolYear === 1 ? 6 : 3)) }))
+      .sort((left, right) => right.grade - left.grade)
+      .slice(0, targetCount)
+      .sort((left, right) => pitchDisplayOrder(left.type) - pitchDisplayOrder(right.type));
+    next.outPitch = strongestPitch(next.pitchArsenal);
+  }
   if (next.commandGrade !== null) next.commandGrade = roundGrade(next.commandGrade - (schoolYear === 1 ? 5 : 2));
   if (next.starterChance !== null) next.starterChance = Math.round(clamp(next.starterChance - (schoolYear === 1 ? 13 : 5), 1, 98));
   return next;
@@ -1761,6 +1771,13 @@ function polishHighSchoolSpecialPitcherStats(stats: PitcherStats, rng: Rng, posi
   next.walksPerNine = roundTo(Math.min(next.walksPerNine ?? 9, randomFloat(rng, 1.35, 3.25)), 1);
   next.whip = roundTo(Math.min(next.whip ?? 2, randomFloat(rng, 0.72, 1.08)), 2);
   next.pitchCount = Math.max(next.pitchCount ?? 0, starter ? randomInt(rng, 4, 5) : randomInt(rng, 3, 5));
+  if (next.pitchArsenal) {
+    next.pitchArsenal = next.pitchArsenal.map((pitch) => ({
+      ...pitch,
+      grade: roundGrade(pitch.grade + (["four-seam", "two-seam", "sinker", "cutter", "fastball"].includes(pitch.type) ? randomFloat(rng, 2, 7) : randomFloat(rng, 1, 5))),
+    }));
+    next.outPitch = strongestPitch(next.pitchArsenal);
+  }
   next.commandGrade = roundGrade(Math.max(next.commandGrade ?? 0, randomInt(rng, 55, 75)));
   next.starterChance = starter ? Math.max(next.starterChance ?? 0, randomInt(rng, 72, 96)) : next.starterChance;
   return next;
@@ -1829,6 +1846,16 @@ function createHiddenTalent(rng: Rng, publicRank: number, dataTier: ProspectData
     proAdaptation: randomFloat(rng, 0.12, 0.95),
     workEthic: randomFloat(rng, 0.18, 0.98),
     truePositionFit: {},
+  };
+}
+
+function adjustForkSplitterInjuryRisk(talent: HiddenTalentProfile, pitcherStats?: PitcherStats): HiddenTalentProfile {
+  const forkSplitter = pitcherStats?.pitchArsenal?.filter((pitch) => pitch.type === "forkball" || pitch.type === "splitter") ?? [];
+  if (forkSplitter.length === 0) return talent;
+  const riskAdd = forkSplitter.reduce((total, pitch) => total + (pitch.type === "splitter" ? 0.035 : 0.024) + Math.max(0, pitch.grade - 45) * 0.0018, 0);
+  return {
+    ...talent,
+    injuryRisk: clamp(talent.injuryRisk + riskAdd, 0.03, 0.96),
   };
 }
 
@@ -2075,6 +2102,8 @@ function createPitcherStats(rng: Rng, talent: HiddenTalentProfile, tier: Prospec
   const armSlot = pickPitchingArmSlot(rng);
   const maxVelocityKph = createMaxVelocityKph(rng, talent, armSlot, physical.throws);
   const averageVelocityKph = Math.round(maxVelocityKph - randomFloat(rng, 4, 8));
+  const pitchArsenal = createPitchArsenal(rng, talent, position, maxVelocityKph);
+  const outPitch = strongestPitch(pitchArsenal);
   const reliability = reliabilityForTier(
     tier,
     [
@@ -2105,14 +2134,118 @@ function createPitcherStats(rng: Rng, talent: HiddenTalentProfile, tier: Prospec
       strikeoutsPerNine: roundTo(clamp(4.2 + production / 9 + randomFloat(rng, -1.2, 1.8), 3.1, 16.4), 1),
       walksPerNine: roundTo(clamp(5.6 - talent.currentAbility / 22 + randomFloat(rng, -0.8, 1.1), 1.1, 7.8), 1),
       whip: roundTo(clamp(1.75 - production / 95 + randomFloat(rng, -0.11, 0.16), 0.72, 1.95), 2),
-      pitchCount: randomInt(rng, position === "SP" ? 3 : 2, 5),
-      outPitch: pickOne(rng, ["fastball", "slider", "curveball", "changeup", "splitter", "sinker"]),
+      pitchCount: pitchArsenal.length,
+      outPitch,
+      pitchArsenal,
       commandGrade: roundGrade(30 + talent.currentAbility * 0.45 + talent.proAdaptation * 10 + randomFloat(rng, -8, 8)),
       starterChance: position === "SP" ? randomInt(rng, 45, 92) : randomInt(rng, 8, 42),
       reliability,
     },
     tier,
   );
+}
+
+function createPitchArsenal(rng: Rng, talent: HiddenTalentProfile, position: Position, maxVelocityKph: number): PitchArsenalEntry[] {
+  const tools = talent.pitcherTools;
+  const stuff = tools?.stuff ?? talent.currentAbility;
+  const command = tools?.command ?? talent.currentAbility;
+  const velocity = tools?.velocity ?? talent.currentAbility;
+  const arsenalSignal = stuff * 0.42 + command * 0.18 + talent.proAdaptation * 14 + talent.workEthic * 10 + (position === "SP" ? 4 : 0);
+  const velocityBonus = clamp((maxVelocityKph - 137) * 1.1, -7, 16);
+  const fastballBase = 40 + velocity * 0.28 + talent.currentAbility * 0.14 + velocityBonus + randomFloat(rng, -5, 7);
+  const breakingBase = 27 + stuff * 0.24 + talent.currentAbility * 0.08 + command * 0.06 + randomFloat(rng, -8, 7);
+  const primaryFastball: PitchType = weightedPick(rng, [
+    { value: "four-seam", weight: 72 },
+    { value: "two-seam", weight: 28 },
+  ]);
+  const secondaryPitch = weightedSecondaryPitch(rng);
+  const arsenal: PitchArsenalEntry[] = [
+    { type: primaryFastball, grade: roundGrade(fastballBase) },
+    { type: secondaryPitch, grade: roundGrade(breakingBase + secondaryPitchBias(secondaryPitch)) },
+  ];
+
+  const extraFastballChance = clamp((arsenalSignal - 51) / 42, 0.04, 0.72);
+  if (rng.next() < extraFastballChance) {
+    const remainingFastballs = (["four-seam", "two-seam", "sinker", "cutter"] as PitchType[]).filter((type) => !arsenal.some((pitch) => pitch.type === type));
+    const type = weightedPick(rng, remainingFastballs.map((value) => ({ value, weight: value === "four-seam" || value === "two-seam" ? 28 : value === "sinker" ? 18 : 14 })));
+    arsenal.push({ type, grade: roundGrade(fastballBase - randomFloat(rng, 2, 10) + fastballPitchBias(type)) });
+  }
+
+  const secondaryTarget =
+    arsenalSignal >= 72 && position === "SP"
+      ? 3
+      : arsenalSignal >= 62
+        ? rng.next() < 0.7 ? 3 : 2
+        : arsenalSignal >= 52
+          ? rng.next() < 0.42 ? 2 : 1
+          : 1;
+  while (secondaryPitchCount(arsenal) < secondaryTarget) {
+    const remaining = (["curveball", "slider", "changeup", "forkball", "splitter"] as PitchType[]).filter((type) => !arsenal.some((pitch) => pitch.type === type));
+    if (remaining.length === 0) break;
+    const type = weightedPick(rng, remaining.map((value) => ({ value, weight: secondaryPitchWeight(value) })));
+    arsenal.push({ type, grade: roundGrade(breakingBase + secondaryPitchBias(type) - randomFloat(rng, 3, 12)) });
+  }
+
+  return arsenal.sort((left, right) => pitchDisplayOrder(left.type) - pitchDisplayOrder(right.type));
+}
+
+function weightedSecondaryPitch(rng: Rng): PitchType {
+  return weightedPick(rng, [
+    { value: "curveball", weight: 36 },
+    { value: "slider", weight: 31 },
+    { value: "changeup", weight: 19 },
+    { value: "forkball", weight: 9 },
+    { value: "splitter", weight: 5 },
+  ]);
+}
+
+function secondaryPitchWeight(type: PitchType): number {
+  if (type === "curveball") return 36;
+  if (type === "slider") return 31;
+  if (type === "changeup") return 19;
+  if (type === "forkball") return 9;
+  if (type === "splitter") return 5;
+  return 1;
+}
+
+function secondaryPitchBias(type: PitchType): number {
+  if (type === "curveball") return 4;
+  if (type === "slider") return 2;
+  if (type === "changeup") return -2;
+  if (type === "forkball") return -5;
+  if (type === "splitter") return -7;
+  return 0;
+}
+
+function fastballPitchBias(type: PitchType): number {
+  if (type === "four-seam") return 2;
+  if (type === "two-seam") return 0;
+  if (type === "sinker") return -3;
+  if (type === "cutter") return -5;
+  return 0;
+}
+
+function secondaryPitchCount(arsenal: PitchArsenalEntry[]): number {
+  return arsenal.filter((pitch) => ["slider", "changeup", "splitter", "forkball", "curveball"].includes(pitch.type)).length;
+}
+
+function strongestPitch(arsenal: PitchArsenalEntry[]): PitchType | null {
+  return [...arsenal].sort((left, right) => right.grade - left.grade)[0]?.type ?? null;
+}
+
+function pitchDisplayOrder(type: PitchType): number {
+  return {
+    "four-seam": 0,
+    "two-seam": 1,
+    sinker: 2,
+    cutter: 3,
+    curveball: 4,
+    slider: 5,
+    changeup: 6,
+    forkball: 7,
+    splitter: 8,
+    fastball: 9,
+  }[type];
 }
 
 function visibleProductionScore(rng: Rng, talent: HiddenTalentProfile, leagueLevel: LeagueLevel): number {
