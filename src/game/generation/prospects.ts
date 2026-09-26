@@ -225,21 +225,21 @@ function promoteProspect(rng: Rng, prospect: Prospect, year: number, schools: Sc
 
 function createHighSchoolSpecialCount(rng: Rng, classQuality: DraftClassQualityProfile, schoolYear: SchoolYear): number {
   if (schoolYear === 1) {
-    if (classQuality.id === "bumper" && rng.next() < 0.45) return 1;
-    if (classQuality.id === "strong" && rng.next() < 0.22) return 1;
+    if (classQuality.id === "bumper" && rng.next() < 0.18) return 1;
+    if (classQuality.id === "strong" && rng.next() < 0.08) return 1;
     return 0;
   }
   if (schoolYear === 2) {
-    if (classQuality.id === "bumper") return randomInt(rng, 2, 4);
-    if (classQuality.id === "strong") return randomInt(rng, 1, 3);
-    if (classQuality.id === "normal") return rng.next() < 0.62 ? randomInt(rng, 1, 2) : 0;
-    return rng.next() < 0.32 ? 1 : 0;
+    if (classQuality.id === "bumper") return randomInt(rng, 1, 2);
+    if (classQuality.id === "strong") return rng.next() < 0.56 ? 1 : 0;
+    if (classQuality.id === "normal") return rng.next() < 0.24 ? 1 : 0;
+    return rng.next() < 0.12 ? 1 : 0;
   }
-  if (classQuality.id === "bumper") return randomInt(rng, 6, 10);
-  if (classQuality.id === "strong") return randomInt(rng, 4, 8);
-  if (classQuality.id === "normal") return randomInt(rng, 3, 6);
-  if (classQuality.id === "thin") return randomInt(rng, 2, 4);
-  return randomInt(rng, 2, 3);
+  if (classQuality.id === "bumper") return randomInt(rng, 4, 7);
+  if (classQuality.id === "strong") return randomInt(rng, 2, 4);
+  if (classQuality.id === "normal") return randomInt(rng, 1, 3);
+  if (classQuality.id === "thin") return rng.next() < 0.64 ? 1 : 2;
+  return rng.next() < 0.72 ? 1 : 0;
 }
 
 function createDraftClassQuality(rng: Rng): DraftClassQualityProfile {
@@ -1952,9 +1952,11 @@ function isDraftEligibleHighSchoolSpecialSignal(prospect: Prospect): boolean {
   if (prospect.schoolYear !== 3) return false;
   if (prospect.archetype === "고교특급") return true;
   return (
-    prospect.trueTalent.currentAbility >= 75 &&
-    prospect.trueTalent.potential >= 80 &&
-    (prospect.visible.scoutGrade === "S" || prospect.visible.projectedRound.min <= 2 || prospect.reputation >= 55 || prospect.draftHype >= 60)
+    prospect.trueTalent.currentAbility >= 78 &&
+    prospect.trueTalent.potential >= 84 &&
+    prospect.visible.scoutGrade === "S" &&
+    prospect.visible.publicRank <= 12 &&
+    (prospect.reputation >= 68 || prospect.draftHype >= 72)
   );
 }
 
