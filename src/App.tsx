@@ -3516,6 +3516,7 @@ type RosterMember = {
   name: string;
   overall: number;
   age?: number;
+  primaryPosition: Position;
   source: "drafted" | "existing";
   playerId?: ProspectId;
   note: string;
@@ -5656,11 +5657,13 @@ function createTeamFanOpinion(
   const comments: string[] = [];
 
   if (latest) {
+    const rankChange = latest.previousRank ? latest.previousRank - latest.rank : 0;
     score += (11 - latest.rank) * 3.4;
+    score -= Math.max(0, latest.rank - 7) * 7.5;
+    score += rankChange * 2.8;
     score += latest.prospectContribution * 1.1 + latest.regularContribution * 0.9 + latest.draftImpact * 0.75;
     score -= latest.injuryPenalty * 0.65;
     score += latest.pickTradeImpact * 0.55;
-    const rankChange = latest.previousRank ? latest.previousRank - latest.rank : 0;
     if (latest.rank <= 3) positives.push(`${latest.rank}위 마감으로 팬 여론은 확실히 달아올랐습니다.`);
     if (latest.rank >= 8) negatives.push(`${latest.rank}위 시즌에 대한 불만이 큽니다.`);
     if (rankChange > 0) positives.push(`전년 대비 ${rankChange}계단 상승하며 방향성에 대한 신뢰가 조금 붙었습니다.`);
@@ -5706,7 +5709,16 @@ function createTeamFanOpinion(
   if (tradeImpact < 0) negatives.push("지명권 확보 대신 전력이 약해졌다는 불만도 있습니다.");
   if (userTrades.length > 0) comments.push("트레이드 방향은 이해해도 결과 없으면 바로 말 나옵니다.");
 
-  const finalScore = Math.round(clampNumber(score, 0, 100));
+  const scoreCap = latest
+    ? latest.rank >= 10
+      ? 42
+      : latest.rank >= 8
+        ? 55
+        : latest.previousRank && latest.previousRank - latest.rank <= -5
+          ? 62
+          : 100
+    : 100;
+  const finalScore = Math.round(clampNumber(score, 0, scoreCap));
   const mood = finalScore >= 68 ? "positive" : finalScore <= 42 ? "negative" : "neutral";
   const label = finalScore >= 78 ? "우호적" : finalScore >= 60 ? "기대 우세" : finalScore >= 43 ? "관망" : finalScore >= 28 ? "불만" : "폭발 직전";
   return {
@@ -5751,12 +5763,26 @@ function createTeamFanMetrics(
   const playoffSignal = recent.filter((result) => result.rank <= 5).length;
   const draftedStarCount = teamPlayers.filter((player) => player.originalTeamId === userTeamId && player.currentOverall >= 70).length;
   const departedStarPenalty = players.filter((player) => player.originalTeamId === userTeamId && player.team.id !== userTeamId && player.currentOverall >= 70 && player.status !== "방출" && player.status !== "은퇴").length * 3;
+  const rankChange = latest?.previousRank ? latest.previousRank - latest.rank : 0;
+  const poorSeasonPenalty = latest ? Math.max(0, latest.rank - 7) * 8 : 0;
+  const collapsePenalty = Math.max(0, -rankChange - 2) * 4.5;
+  const popularityCap = latest
+    ? latest.rank >= 10
+      ? 58
+      : latest.rank >= 8
+        ? 70
+        : rankChange <= -5
+          ? 76
+          : 100
+    : 100;
+  const attendanceCap = latest && latest.rank >= 10 ? 52 : latest && latest.rank >= 8 ? 66 : 100;
+  const loyaltyCap = latest && latest.rank >= 10 ? 68 : latest && rankChange <= -5 ? 74 : 100;
 
-  const popularity = Math.round(clampNumber(34 + opinion.score * 0.28 + rankBoost + starPower + playoffSignal * 3 + draftedStarCount * 1.8 - departedStarPenalty, 0, 100));
-  const attendanceIndex = Math.round(clampNumber(popularity * 0.62 + (latest ? (11 - latest.rank) * 3.4 : 12) + opinion.score * 0.16, 0, 100));
+  const popularity = Math.round(clampNumber(34 + opinion.score * 0.28 + rankBoost + starPower + playoffSignal * 3 + draftedStarCount * 1.8 - departedStarPenalty - poorSeasonPenalty - collapsePenalty, 0, popularityCap));
+  const attendanceIndex = Math.round(clampNumber(popularity * 0.62 + (latest ? (11 - latest.rank) * 3.4 : 12) + opinion.score * 0.16 - poorSeasonPenalty * 0.55, 0, attendanceCap));
   const merchandiseIndex = Math.round(clampNumber(38 + starPower * 4.8 + teamPlayers.filter((player) => player.currentOverall >= 68).length * 2.2 + opinion.score * 0.16, 0, 100));
-  const onlineBuzz = Math.round(clampNumber(35 + opinion.score * 0.2 + teamPlayers.filter((player) => player.eventKeys.length >= 5 || player.currentOverall >= 74).length * 4.2 + departedStarPenalty * 1.6, 0, 100));
-  const loyaltyIndex = Math.round(clampNumber(42 + (11 - recentAverageRank) * 2.4 + teamPlayers.filter((player) => player.originalTeamId === userTeamId && yearsWithTeam(player, team) >= 5).length * 3 + opinion.score * 0.15, 0, 100));
+  const onlineBuzz = Math.round(clampNumber(35 + opinion.score * 0.2 + teamPlayers.filter((player) => player.eventKeys.length >= 5 || player.currentOverall >= 74).length * 4.2 + departedStarPenalty * 1.6 + collapsePenalty * 0.45, 0, 100));
+  const loyaltyIndex = Math.round(clampNumber(42 + (11 - recentAverageRank) * 2.4 + teamPlayers.filter((player) => player.originalTeamId === userTeamId && yearsWithTeam(player, team) >= 5).length * 3 + opinion.score * 0.15 - poorSeasonPenalty * 0.35, 0, loyaltyCap));
   const jerseyRows = createJerseySalesRows(teamPlayers, awards, allStars, nationalTeams, records);
 
   return {
@@ -6851,6 +6877,7 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
     return POSITIONS.map((position) => ({ position, starters: [], platoon: [], secondTeam: [], draftedCount: 0, existingCount: 0, need: 0 }));
   }
 
+  const usedStarterIds = new Set<string>();
   return POSITIONS.map((position) => {
     const { draftedMembers, existingMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position);
     const members = [...draftedMembers, ...existingMembers].sort((left, right) => right.overall - left.overall || (left.age ?? 99) - (right.age ?? 99));
@@ -6858,6 +6885,7 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
       const bullpenMembers = assignBullpenRolesToRosterMembers(members);
       const leverageRoles = new Set(["마무리", "셋업맨", "필승조"]);
       const starters = bullpenMembers.filter((member) => member.bullpenRole && leverageRoles.has(member.bullpenRole)).slice(0, 4);
+      starters.forEach((member) => usedStarterIds.add(member.id));
       const starterIds = new Set(starters.map((member) => member.id));
       const platoon = bullpenMembers.filter((member) => !starterIds.has(member.id) && member.bullpenRole).slice(0, 5);
       const usedIds = new Set([...Array.from(starterIds), ...platoon.map((member) => member.id)]);
@@ -6874,9 +6902,14 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
     }
     const starterCount = position === "SP" ? 5 : 1;
     const platoonCount = position === "SP" ? 3 : 2;
-    const starters = members.slice(0, starterCount);
-    const platoon = members.slice(starterCount, starterCount + platoonCount);
-    const secondTeam = members.slice(starterCount + platoonCount, starterCount + platoonCount + 4);
+    const starterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && (member.primaryPosition === position || position === "SP"));
+    const fallbackStarterCandidates = members.filter((member) => !usedStarterIds.has(member.id) && !starterCandidates.some((candidate) => candidate.id === member.id));
+    const starters = [...starterCandidates, ...fallbackStarterCandidates].slice(0, starterCount);
+    starters.forEach((member) => usedStarterIds.add(member.id));
+    const starterIds = new Set(starters.map((member) => member.id));
+    const backups = members.filter((member) => !starterIds.has(member.id));
+    const platoon = backups.slice(0, platoonCount);
+    const secondTeam = backups.slice(platoonCount, platoonCount + 4);
     return {
       position,
       starters,
@@ -6899,6 +6932,7 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       name: player.prospect.name,
       overall: player.currentOverall,
       age: careerAge(player),
+      primaryPosition: player.prospect.primaryPosition,
       source: "drafted",
       playerId: player.playerId,
       bullpenRole: player.bullpenRole,
@@ -6910,6 +6944,7 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       name: existingPlayerName(player),
       overall: player.overall,
       age: player.age,
+      primaryPosition: position,
       source: "existing",
       note: "기존 선수층",
     }));
