@@ -217,9 +217,10 @@ function promoteProspect(rng: Rng, prospect: Prospect, year: number, schools: Sc
       }, year, highSchoolSnapshotNote(growth, nextSchoolYear, event)),
     ],
   };
-  return nextSchoolYear === 3 && promoted.mlbDirectStatus === "interest"
-    ? maybeApplyMlbDirectEvent(rng, promoted, year)
-    : promoted;
+  const exposedPromoted = exposePromotedHighSchoolSpecial(promoted, year);
+  return nextSchoolYear === 3 && exposedPromoted.mlbDirectStatus === "interest"
+    ? maybeApplyMlbDirectEvent(rng, exposedPromoted, year)
+    : exposedPromoted;
 }
 
 function createHighSchoolSpecialCount(rng: Rng, classQuality: DraftClassQualityProfile, schoolYear: SchoolYear): number {
@@ -360,7 +361,12 @@ function createProspect(rng: Rng, year: number, publicRank: number, school: Scho
     schoolDevelopmentBias: school.developmentBias,
     schoolReportReliabilityBase: school.reportReliabilityBase,
   });
-  const visible = createSchoolYearVisibleReport(highSchoolSpecial ? createHighSchoolSpecialVisibleReport(baseVisible, trueTalent.currentAbility) : baseVisible, schoolYear, highSchoolSpecial);
+  const visible = exposeDraftEligibleHighSchoolSpecial(
+    createSchoolYearVisibleReport(highSchoolSpecial ? createHighSchoolSpecialVisibleReport(baseVisible, trueTalent.currentAbility) : baseVisible, schoolYear, highSchoolSpecial),
+    trueTalent.currentAbility,
+    schoolYear,
+    highSchoolSpecial,
+  );
   const seasonFormCycle = createSeasonFormCycle(rng, playerGroup === "pitcher" ? "pitcher" : "hitter", trueTalent, dataTier, highSchoolSpecial, hitterStats, pitcherStats);
 
   const prospect: Prospect = {
@@ -1858,6 +1864,71 @@ function createHighSchoolSpecialVisibleReport(report: ReturnType<typeof createVi
     growthProjection: "입단 직후부터 1군 전력 계산에 넣을 수 있는 고교 특급 자원. 다만 프로 적응과 건강 변수는 여전히 확인해야 한다.",
     oneLine: `고교특급. 현재 완성도가 이미 1라운드 상단 기준을 넘는 선수로, 즉시 전력 기대치와 장기 고점이 함께 붙는다.`,
   };
+}
+
+function exposeDraftEligibleHighSchoolSpecial(report: VisibleScoutingReport, currentAbility: number, schoolYear: SchoolYear, highSchoolSpecial: boolean): VisibleScoutingReport {
+  if (!highSchoolSpecial || schoolYear !== 3) return report;
+  const exposedRank = currentAbility >= 78 ? 3 : currentAbility >= 76 ? 8 : 15;
+  const publicRank = Math.min(report.publicRank, exposedRank);
+  const dataTier = dataTierFromPublicRank(publicRank);
+  return {
+    ...report,
+    dataTier,
+    visibility: "full",
+    publicRank,
+    scoutGrade: "S",
+    confidence: clamp(report.confidence + 0.12, 0.88, 0.98),
+    projectedRound: { min: 1, max: 1 },
+    expectedOverallRange: {
+      min: Math.max(report.expectedOverallRange.min, Math.max(70, currentAbility - 4)),
+      max: Math.max(report.expectedOverallRange.max, Math.min(80, currentAbility + 3)),
+    },
+    teamInterest: mergeTeamInterest(report.teamInterest, [findAccolade("u18-national"), findAccolade("golden-lion-mvp")]),
+    growthProjection: "3학년 시점에는 전국 단위 검증과 구단 크로스체크가 붙은 고교특급으로 분류된다. 성공을 보장하지는 않지만 더 이상 숨은 후보로 보기는 어렵다.",
+    oneLine: "고교특급. 3학년 드래프트 시점에는 전국권 상위 후보로 공개 평가가 정리된 선수다.",
+    summary: `3학년 들어 전국 단위 추적 대상이 확정됐다. ${report.summary}`,
+  };
+}
+
+function exposePromotedHighSchoolSpecial(prospect: Prospect, year: number): Prospect {
+  if (!isDraftEligibleHighSchoolSpecialSignal(prospect)) return prospect;
+  const exposureAccolades = ["u18-national", "college-hs-allstar"]
+    .filter((id) => !prospect.accolades.some((accolade) => accolade.id === id))
+    .map(findAccolade);
+  const withExposure = applyAccoladesToProspect(prospect, exposureAccolades, year);
+  const visible = exposeDraftEligibleHighSchoolSpecial(withExposure.visible, withExposure.trueTalent.currentAbility, withExposure.schoolYear, true);
+  const next: Prospect = {
+    ...withExposure,
+    archetype: withExposure.archetype === "고교특급" ? withExposure.archetype : "고교특급",
+    reputation: Math.max(withExposure.reputation, 72),
+    draftHype: Math.max(withExposure.draftHype, 76),
+    visible,
+    highSchoolCareerLog: [
+      ...withExposure.highSchoolCareerLog,
+      {
+        year,
+        schoolYear: withExposure.schoolYear,
+        type: "ranking",
+        headline: `${withExposure.name}, 3학년 전국구 고교특급 평가 확정`,
+        body: "저학년 때부터 관찰되던 재능이 3학년 기록과 대표·쇼케이스 노출을 거치며 최상위 드래프트 후보군으로 공개 정리됐다.",
+        importance: 5,
+      },
+    ],
+  };
+  return {
+    ...next,
+    highSchoolSnapshots: replaceCurrentSnapshot(next, year, "3학년 고교특급 공개 평가 확정"),
+  };
+}
+
+function isDraftEligibleHighSchoolSpecialSignal(prospect: Prospect): boolean {
+  if (prospect.schoolYear !== 3) return false;
+  if (prospect.archetype === "고교특급") return true;
+  return (
+    prospect.trueTalent.currentAbility >= 75 &&
+    prospect.trueTalent.potential >= 80 &&
+    (prospect.visible.scoutGrade === "S" || prospect.visible.projectedRound.min <= 2 || prospect.reputation >= 55 || prospect.draftHype >= 60)
+  );
 }
 
 function createSchoolYearVisibleReport(report: ReturnType<typeof createVisibleScoutingReport>, schoolYear: SchoolYear, highSchoolSpecial: boolean): ReturnType<typeof createVisibleScoutingReport> {
