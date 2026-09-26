@@ -2280,6 +2280,40 @@ button.roster-member:hover {
   margin: 0;
 }
 
+.fan-metrics-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1.2fr repeat(4, minmax(0, 1fr));
+}
+
+.fan-metric-card {
+  background: #fff;
+  border: 1px solid #d8dee6;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.fan-metric-card span {
+  color: #66717d;
+  font-size: 11px;
+}
+
+.fan-metric-card strong {
+  color: #17202a;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.fan-metric-card small {
+  color: #586574;
+  line-height: 1.35;
+}
+
+.jersey-wrap {
+  max-height: 340px;
+}
+
 .pick-assets-wrap {
   max-height: 220px;
 }

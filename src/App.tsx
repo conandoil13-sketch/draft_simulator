@@ -254,7 +254,7 @@ function App() {
   const [trackingSortKey, setTrackingSortKey] = useState<TrackingSortKey>("round");
   const [trackingSortDirection, setTrackingSortDirection] = useState<SortDirection>("asc");
   const [trackingSubTab, setTrackingSubTab] = useState<"news" | "manage" | "add">("news");
-  const [teamSubTab, setTeamSubTab] = useState<"draft" | "status">("draft");
+  const [teamSubTab, setTeamSubTab] = useState<"draft" | "status" | "fans">("draft");
   const [leagueHistorySubTab, setLeagueHistorySubTab] = useState<LeagueHistorySubTab>("current");
   const [selectedAwardSeason, setSelectedAwardSeason] = useState<number | undefined>();
   const [selectedAllStarSeason, setSelectedAllStarSeason] = useState<number | undefined>();
@@ -369,6 +369,7 @@ function App() {
   const risingNeeds = userNeedRows.filter((row) => row.change > 0).slice(0, 3);
   const fallingNeeds = userNeedRows.filter((row) => row.change < 0).slice(0, 3);
   const teamFanOpinion = useMemo(() => createTeamFanOpinion(selectedTeam, userTeamId, latestSeasonResults, userSeasonHistory, userNeedRows, careerPlayers, pickTradeEvents, nextDraftPicks, teamTradeStrengthAdjustments), [careerPlayers, latestSeasonResults, nextDraftPicks, pickTradeEvents, selectedTeam, teamTradeStrengthAdjustments, userNeedRows, userSeasonHistory, userTeamId]);
+  const teamFanMetrics = useMemo(() => createTeamFanMetrics(selectedTeam, userTeamId, careerPlayers, seasonResults, teamFanOpinion, yearlyAwardRows, allStarRows, nationalTeamRows, allRecordBreakerRows), [allRecordBreakerRows, allStarRows, careerPlayers, nationalTeamRows, seasonResults, selectedTeam, teamFanOpinion, userTeamId, yearlyAwardRows]);
   const trackingRows = useMemo(() => createTrackingRows(careerPlayers, trackingFilter, trackingSortKey, trackingSortDirection, careerYearBucket, careerYear), [careerPlayers, careerYear, careerYearBucket, trackingFilter, trackingSortDirection, trackingSortKey]);
   const trackingAddRows = useMemo(() => createTrackingAddRows(careerPlayers, careerYearBucket), [careerPlayers, careerYearBucket]);
   const trackingSummary = useMemo(() => createTrackingSummary(careerPlayers, careerNews, userTeamId), [careerNews, careerPlayers, userTeamId]);
@@ -1516,6 +1517,7 @@ function App() {
             <div className="sub-tabs team-sub-tabs" aria-label="구단 상황 하위 탭">
               <button data-active={teamSubTab === "draft"} onClick={() => setTeamSubTab("draft")}>드래프트 관련</button>
               <button data-active={teamSubTab === "status"} onClick={() => setTeamSubTab("status")}>구단 현황</button>
+              <button data-active={teamSubTab === "fans"} onClick={() => setTeamSubTab("fans")}>팬</button>
             </div>
           )}
 
@@ -1646,7 +1648,90 @@ function App() {
             )}
           </section>}
 
-          {activeTab === "team" && teamSubTab === "status" && <section className="fan-section">
+          {activeTab === "team" && teamSubTab === "fans" && <section className="fan-section">
+            <div className="career-head">
+              <div>
+                <h2>팬덤 지표</h2>
+                <p>성적, 스타 선수, 드래프트 서사, 팬 여론을 합성한 게임 내 팬덤 추정치입니다.</p>
+              </div>
+              <CollapseButton collapsed={isCollapsed("team-fan-metrics")} onClick={() => toggleCollapsed("team-fan-metrics")} />
+            </div>
+            {!isCollapsed("team-fan-metrics") && (
+              <div className="fan-metrics-grid">
+                <div className="opinion-score-card" data-mood={teamFanOpinion.mood}>
+                  <span>구단 인기도</span>
+                  <strong>{teamFanMetrics.popularity}</strong>
+                  <em>{teamFanMetrics.popularityLabel}</em>
+                </div>
+                <div className="fan-metric-card">
+                  <span>관중 동원 지수</span>
+                  <strong>{teamFanMetrics.attendanceIndex}</strong>
+                  <small>{teamFanMetrics.momentum}</small>
+                </div>
+                <div className="fan-metric-card">
+                  <span>굿즈 구매력</span>
+                  <strong>{teamFanMetrics.merchandiseIndex}</strong>
+                  <small>유니폼 판매 랭킹에 반영</small>
+                </div>
+                <div className="fan-metric-card">
+                  <span>온라인 화제성</span>
+                  <strong>{teamFanMetrics.onlineBuzz}</strong>
+                  <small>스타·논쟁·대표팀 이슈 반영</small>
+                </div>
+                <div className="fan-metric-card">
+                  <span>충성 팬 지수</span>
+                  <strong>{teamFanMetrics.loyaltyIndex}</strong>
+                  <small>프랜차이즈 서사와 장기 성적 반영</small>
+                </div>
+              </div>
+            )}
+          </section>}
+
+          {activeTab === "team" && teamSubTab === "fans" && <section className="needs-section">
+            <div className="career-head">
+              <div>
+                <h2>팀내 유니폼 판매량 랭킹</h2>
+                <p>현재 소속 선수 기준 추정 판매 비중입니다. 활약, 스타성, 원클럽 서사, 대표팀·수상 이력이 영향을 줍니다.</p>
+              </div>
+              <CollapseButton collapsed={isCollapsed("jersey-ranking")} onClick={() => toggleCollapsed("jersey-ranking")} />
+            </div>
+            {!isCollapsed("jersey-ranking") && (
+              teamFanMetrics.jerseyRows.length === 0 ? (
+                <p className="empty">아직 유니폼 판매 랭킹에 잡힐 소속 선수가 없습니다.</p>
+              ) : (
+                <div className="standings-wrap jersey-wrap">
+                  <table className="compact-table">
+                    <thead>
+                      <tr>
+                        <th>순위</th>
+                        <th>선수</th>
+                        <th>포지션</th>
+                        <th>연차</th>
+                        <th>현재 OVR</th>
+                        <th>판매 비중</th>
+                        <th>주요 요인</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamFanMetrics.jerseyRows.map((row) => (
+                        <tr key={row.player.playerId} className={userPlayerRowClass(row.player)}>
+                          <td className="num">{row.rank}</td>
+                          <td><button className="link-button" onClick={() => setDetailPlayerId(row.player.playerId)}>{row.player.prospect.name}</button></td>
+                          <td><span className={`pos pos-${row.player.prospect.primaryPosition}`}>{positionLabel(row.player.prospect.primaryPosition)}</span></td>
+                          <td className="num">{row.player.yearsSinceDraft}년차</td>
+                          <td className="num">{row.player.currentOverall}</td>
+                          <td className="num">{row.salesShare}%</td>
+                          <td>{row.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </section>}
+
+          {activeTab === "team" && teamSubTab === "fans" && <section className="fan-section">
             <div className="career-head">
               <div>
                 <h2>시즌 후 팬 여론</h2>
@@ -3462,6 +3547,25 @@ type TeamCycleSummary = {
   postseasonFitGrade: string;
   strongMonths: string;
   weakMonths: string;
+};
+
+type TeamFanMetrics = {
+  popularity: number;
+  popularityLabel: string;
+  attendanceIndex: number;
+  merchandiseIndex: number;
+  onlineBuzz: number;
+  loyaltyIndex: number;
+  momentum: string;
+  jerseyRows: JerseySalesRow[];
+};
+
+type JerseySalesRow = {
+  rank: number;
+  player: CareerPlayerState;
+  score: number;
+  salesShare: number;
+  reason: string;
 };
 
 type NationalTeamSelectionContext = {
@@ -5560,6 +5664,129 @@ function createTeamFanOpinion(
     negatives: uniqueStrings(negatives).slice(0, 4),
     comments: uniqueStrings(comments.length ? comments : ["팬들은 아직 반신반의하고 있습니다. 결과가 나오기 전까지는 조용하지 않을 분위기입니다."]).slice(0, 6),
   };
+}
+
+function createTeamFanMetrics(
+  team: Team | undefined,
+  userTeamId: TeamId | undefined,
+  players: CareerPlayerState[],
+  results: TeamSeasonResult[],
+  opinion: ReturnType<typeof createTeamFanOpinion>,
+  awards: YearlyAwardRow[],
+  allStars: SelectionHistoryRow[],
+  nationalTeams: SelectionHistoryRow[],
+  records: RecordBreakerRow[],
+): TeamFanMetrics {
+  if (!team || !userTeamId) {
+    return {
+      popularity: 50,
+      popularityLabel: "기준값",
+      attendanceIndex: 50,
+      merchandiseIndex: 50,
+      onlineBuzz: 50,
+      loyaltyIndex: 50,
+      momentum: "아직 팬덤 흐름을 판단할 데이터가 부족합니다.",
+      jerseyRows: [],
+    };
+  }
+  const teamPlayers = players.filter((player) => player.team.id === userTeamId && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
+  const latest = [...results].filter((result) => result.teamId === userTeamId).sort((left, right) => right.yearIndex - left.yearIndex)[0];
+  const recent = [...results].filter((result) => result.teamId === userTeamId).sort((left, right) => right.yearIndex - left.yearIndex).slice(0, 3);
+  const starPower = teamPlayers.reduce((sum, player) => sum + Math.max(0, jerseySalesScore(player, awards, allStars, nationalTeams, records) - 55) / 12, 0);
+  const rankBoost = latest ? (11 - latest.rank) * 2.2 : 0;
+  const recentAverageRank = recent.length ? recent.reduce((sum, result) => sum + result.rank, 0) / recent.length : 6;
+  const playoffSignal = recent.filter((result) => result.rank <= 5).length;
+  const draftedStarCount = teamPlayers.filter((player) => player.originalTeamId === userTeamId && player.currentOverall >= 70).length;
+  const departedStarPenalty = players.filter((player) => player.originalTeamId === userTeamId && player.team.id !== userTeamId && player.currentOverall >= 70 && player.status !== "방출" && player.status !== "은퇴").length * 3;
+
+  const popularity = Math.round(clampNumber(34 + opinion.score * 0.28 + rankBoost + starPower + playoffSignal * 3 + draftedStarCount * 1.8 - departedStarPenalty, 0, 100));
+  const attendanceIndex = Math.round(clampNumber(popularity * 0.62 + (latest ? (11 - latest.rank) * 3.4 : 12) + opinion.score * 0.16, 0, 100));
+  const merchandiseIndex = Math.round(clampNumber(38 + starPower * 4.8 + teamPlayers.filter((player) => player.currentOverall >= 68).length * 2.2 + opinion.score * 0.16, 0, 100));
+  const onlineBuzz = Math.round(clampNumber(35 + opinion.score * 0.2 + teamPlayers.filter((player) => player.eventKeys.length >= 5 || player.currentOverall >= 74).length * 4.2 + departedStarPenalty * 1.6, 0, 100));
+  const loyaltyIndex = Math.round(clampNumber(42 + (11 - recentAverageRank) * 2.4 + teamPlayers.filter((player) => player.originalTeamId === userTeamId && yearsWithTeam(player, team) >= 5).length * 3 + opinion.score * 0.15, 0, 100));
+  const jerseyRows = createJerseySalesRows(teamPlayers, awards, allStars, nationalTeams, records);
+
+  return {
+    popularity,
+    popularityLabel: fanPopularityLabel(popularity),
+    attendanceIndex,
+    merchandiseIndex,
+    onlineBuzz,
+    loyaltyIndex,
+    momentum: fanMomentumText(latest, recent, opinion.score),
+    jerseyRows,
+  };
+}
+
+function createJerseySalesRows(players: CareerPlayerState[], awards: YearlyAwardRow[], allStars: SelectionHistoryRow[], nationalTeams: SelectionHistoryRow[], records: RecordBreakerRow[]): JerseySalesRow[] {
+  const scored = players
+    .map((player) => ({
+      player,
+      score: jerseySalesScore(player, awards, allStars, nationalTeams, records),
+      reason: jerseySalesReason(player, awards, allStars, nationalTeams, records),
+    }))
+    .filter((row) => row.score >= 42)
+    .sort((left, right) => right.score - left.score || right.player.currentOverall - left.player.currentOverall)
+    .slice(0, 10);
+  const total = scored.reduce((sum, row) => sum + row.score, 0) || 1;
+  return scored.map((row, index) => ({
+    ...row,
+    rank: index + 1,
+    salesShare: Math.round((row.score / total) * 100),
+  }));
+}
+
+function jerseySalesScore(player: CareerPlayerState, awards: YearlyAwardRow[], allStars: SelectionHistoryRow[], nationalTeams: SelectionHistoryRow[], records: RecordBreakerRow[]): number {
+  const playerAwards = awards.filter((row) => row.playerId === player.playerId);
+  const playerAllStars = allStars.filter((row) => row.playerId === player.playerId);
+  const playerNationalTeams = nationalTeams.filter((row) => row.playerId === player.playerId);
+  const playerRecords = records.filter((row) => row.player.playerId === player.playerId);
+  const awardBoost = playerAwards.filter((row) => row.category.startsWith("골든글러브")).length * 9 + playerAwards.filter((row) => !row.category.startsWith("골든글러브")).length * 6;
+  const starBoost = playerAllStars.length * 4 + playerNationalTeams.length * 5 + playerRecords.length * 8;
+  const homegrownBoost = player.originalTeamId === player.team.id ? 7 : 0;
+  const ageBoost = player.yearsSinceDraft <= 2 ? 4 : player.yearsSinceDraft >= 8 ? 5 : 0;
+  const storyBoost = player.eventKeys.includes("rookie-award") ? 8 : player.eventKeys.includes("late-breakout") ? 10 : player.eventKeys.includes("mvp") ? 14 : 0;
+  const positionBoost = ["SP", "C", "SS", "CF"].includes(player.prospect.primaryPosition) ? 4 : 1;
+  return Math.round(clampNumber(player.currentOverall * 0.95 + legacyScore(player) * 0.16 + awardBoost + starBoost + homegrownBoost + ageBoost + storyBoost + positionBoost, 0, 160));
+}
+
+function jerseySalesReason(player: CareerPlayerState, awards: YearlyAwardRow[], allStars: SelectionHistoryRow[], nationalTeams: SelectionHistoryRow[], records: RecordBreakerRow[]): string {
+  const reasons: string[] = [];
+  const playerAwards = awards.filter((row) => row.playerId === player.playerId);
+  const goldGloves = playerAwards.filter((row) => row.category.startsWith("골든글러브")).length;
+  const titles = playerAwards.length - goldGloves;
+  const allStarCount = allStars.filter((row) => row.playerId === player.playerId).length;
+  const nationalCount = nationalTeams.filter((row) => row.playerId === player.playerId).length;
+  const recordCount = records.filter((row) => row.player.playerId === player.playerId).length;
+  if (player.currentOverall >= 76) reasons.push("팀 대표 스타");
+  if (goldGloves > 0) reasons.push(`골글 ${goldGloves}회`);
+  if (titles > 0) reasons.push(`타이틀 ${titles}회`);
+  if (allStarCount > 0) reasons.push(`올스타 ${allStarCount}회`);
+  if (nationalCount > 0) reasons.push(`국대 ${nationalCount}회`);
+  if (recordCount > 0) reasons.push(`대기록 ${recordCount}건`);
+  if (player.originalTeamId === player.team.id) reasons.push("홈그로운");
+  if (player.pick.round >= 8 && player.currentOverall >= 65) reasons.push("하위라운드 서사");
+  return reasons.slice(0, 3).join(" · ") || "성장 기대주";
+}
+
+function fanPopularityLabel(score: number): string {
+  if (score >= 85) return "전국구 흥행팀";
+  if (score >= 72) return "상위권 인기팀";
+  if (score >= 58) return "관심 상승";
+  if (score >= 42) return "보통";
+  if (score >= 28) return "침체";
+  return "무관심 위험";
+}
+
+function fanMomentumText(latest: TeamSeasonResult | undefined, recent: TeamSeasonResult[], opinionScore: number): string {
+  if (!latest) return "시즌 결과 전이라 드래프트와 비시즌 여론이 팬덤 흐름을 좌우합니다.";
+  const previous = recent[1];
+  const rankChange = previous ? previous.rank - latest.rank : 0;
+  if (latest.rank <= 3 && opinionScore >= 65) return "성적과 여론이 함께 올라오는 흥행 상승 구간입니다.";
+  if (rankChange >= 3) return `전년 대비 ${rankChange}계단 상승하며 팬덤 유입이 늘었습니다.`;
+  if (latest.rank >= 8 && opinionScore <= 45) return "성적 부진과 불만 여론이 겹쳐 팬덤 온도가 낮습니다.";
+  if (rankChange <= -3) return `전년 대비 ${Math.abs(rankChange)}계단 하락해 충성 팬 중심으로 버티는 흐름입니다.`;
+  return "큰 폭의 유입이나 이탈 없이 기존 팬덤이 유지되는 흐름입니다.";
 }
 
 function seasonFanComments(team: Team, result: TeamSeasonResult, rankChange: number): string[] {
