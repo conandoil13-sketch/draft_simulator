@@ -8642,7 +8642,7 @@ function chooseDevelopmentOutcome(player: CareerPlayerState, delta: number, inju
 }
 
 function careerAge(player: CareerPlayerState, offsetYears = 0): number {
-  return 18 + player.yearsSinceDraft + offsetYears;
+  return Math.round(player.prospect.age) + player.yearsSinceDraft + offsetYears;
 }
 
 function agingCurveRisk(age: number): number {
