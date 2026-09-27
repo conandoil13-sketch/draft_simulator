@@ -2450,6 +2450,12 @@ tbody tr:hover {
   padding: 1px 5px;
 }
 
+.position-origin {
+  color: #7a8490;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .draft-pick-toast {
   background: #17202a;
   border: 1px solid #000;

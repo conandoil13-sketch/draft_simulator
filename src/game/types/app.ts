@@ -175,6 +175,7 @@ export type CareerPlayerState = {
   trackingStatus: TrackingStatus;
   trackingArchivedAtYear?: number;
   status: "2군" | "1군" | "부상" | "방출" | "은퇴" | "해외진출";
+  currentPosition?: Position;
   bullpenRole?: "마무리" | "셋업맨" | "필승조" | "롱맨" | "추격조" | "패전조";
   fieldingRole?: "지명타자";
   debuted: boolean;

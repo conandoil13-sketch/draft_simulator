@@ -1260,7 +1260,8 @@ function App() {
     const militaryManagedPlayers = applyMilitaryServiceTransitions(basePlayers, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     const advancedPlayers = militaryManagedPlayers.map((player) => advanceCareerPlayer(player, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, teams, news, developmentClimate));
     applyUserInboundTransactions(advancedPlayers, nextYear, userTeamId, teams, watchedIds, nextAfterUserPickIds, news);
-    const rosterLimitedPlayers = assignBullpenRoles(applyRosterLimitCuts(advancedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, teams, news), teams);
+    const roleAdjustedPlayers = applyTeamRoleAdjustments(applyRosterLimitCuts(advancedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, teams, news), teams, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
+    const rosterLimitedPlayers = assignBullpenRoles(roleAdjustedPlayers, teams);
     const nextExistingPlayers = advanceExistingPlayers(existingPlayers.length > 0 ? existingPlayers : createInitialExistingPlayers(teams), nextYear);
     awardSingleRookieOfYear(rosterLimitedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     addSeasonSelectionHonors(rosterLimitedPlayers, nextExistingPlayers, teams, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
@@ -1800,7 +1801,7 @@ function App() {
                         <tr key={row.player.playerId} className={userPlayerRowClass(row.player)}>
                           <td className="num">{row.rank}</td>
                           <td><button className="link-button" onClick={() => setDetailPlayerId(row.player.playerId)}>{row.player.prospect.name}</button></td>
-                          <td><span className={`pos pos-${row.player.prospect.primaryPosition}`}>{positionLabel(row.player.prospect.primaryPosition)}</span></td>
+                          <td><PositionCell player={row.player} /></td>
                           <td className="num">{row.player.yearsSinceDraft}년차</td>
                           <td className="num">{row.player.currentOverall}</td>
                           <td className="num">{row.salesShare}%</td>
@@ -2211,7 +2212,7 @@ function App() {
                   {selectedCareerPlayer ? (
                     <>
                       <div className="detail-line">
-                        <span className={`pos pos-${selectedCareerPlayer.prospect.primaryPosition}`}>{positionLabel(selectedCareerPlayer.prospect.primaryPosition)}</span>
+                        <span className={`pos pos-${currentPlayerPosition(selectedCareerPlayer)}`}>{positionLabel(currentPlayerPosition(selectedCareerPlayer))}</span>
                         <span>{selectedCareerPlayer.team.name}</span>
                         <span>{selectedCareerPlayer.pick.round}라운드 {selectedCareerPlayer.pick.overall}번</span>
                         <span>{selectedCareerPlayer.status}</span>
@@ -2329,7 +2330,7 @@ function App() {
                                 <td className="num">{player.draftYear}</td>
                                 <td className="num">{player.pick.round}</td>
                                 <td className="num">{player.pick.overall}</td>
-                                <td><span className={`pos pos-${player.prospect.primaryPosition}`}>{positionLabel(player.prospect.primaryPosition)}</span></td>
+                                <td><PositionCell player={player} /></td>
                                 <td>{player.prospect.school}</td>
                                 <td className="num">{player.initialOverall}</td>
                                 <td className="num">{player.currentOverall}</td>
@@ -2367,7 +2368,7 @@ function App() {
                               <td><button className="link-button" onClick={() => setDetailPlayerId(player.playerId)}>{player.prospect.name}</button></td>
                               <td className="num">{player.draftYear}</td>
                               <td className="num">{player.pick.round}</td>
-                              <td><span className={`pos pos-${player.prospect.primaryPosition}`}>{positionLabel(player.prospect.primaryPosition)}</span></td>
+                              <td><PositionCell player={player} /></td>
                               <td>{player.status}</td>
                               <td>{player.failureReason ?? releaseFailureReason(player)}</td>
                               <td className="num">{player.currentOverall}</td>
@@ -2434,7 +2435,7 @@ function App() {
                             <td>{trackingStatusLabel(player.trackingStatus)} · {player.status}</td>
                             <td>{player.team.shortName}</td>
                             <td className="num">{player.pick.round}R</td>
-                            <td><span className={`pos pos-${player.prospect.primaryPosition}`}>{positionLabel(player.prospect.primaryPosition)}</span></td>
+                            <td><PositionCell player={player} /></td>
                             <td className="num">{player.currentOverall}</td>
                             <td className="num">{formatSigned(player.currentOverall - player.initialOverall)}</td>
                             <td>{shortCareerEvents(player)}</td>
@@ -3633,6 +3634,16 @@ function RosterMemberButton({ member, onSelect }: { member: RosterMember; onSele
   return <span className="roster-member" data-source={member.source}>{content}</span>;
 }
 
+function PositionCell({ player }: { player: CareerPlayerState }) {
+  const current = currentPlayerPosition(player);
+  return (
+    <>
+      <span className={`pos pos-${current}`}>{positionLabel(current)}</span>
+      {current !== player.prospect.primaryPosition && <small className="position-origin"> {positionLabel(player.prospect.primaryPosition)} 출신</small>}
+    </>
+  );
+}
+
 type WeightedCycle = {
   cycle: SeasonFormCycle;
   weight: number;
@@ -4136,15 +4147,16 @@ function CareerPlayerModal({
         <div className="panel-head">
           <div>
             <h2 id="player-detail-title">{player.prospect.name}</h2>
-            <p>{player.team.name} · {positionLabel(player.prospect.primaryPosition)} · {player.prospect.school} · {careerAge(player)}세 · {player.draftYear}년 {player.pick.round}라운드 {player.pick.overall}순위 지명</p>
+            <p>{player.team.name} · {positionLabel(currentPlayerPosition(player))}{currentPlayerPosition(player) !== player.prospect.primaryPosition ? `(${positionLabel(player.prospect.primaryPosition)} 출신)` : ""} · {player.prospect.school} · {careerAge(player)}세 · {player.draftYear}년 {player.pick.round}라운드 {player.pick.overall}순위 지명</p>
           </div>
           <button className="text-button" onClick={onClose}>닫기</button>
         </div>
         <div className="detail-line">
-          <span className={`pos pos-${player.prospect.primaryPosition}`}>{positionLabel(player.prospect.primaryPosition)}</span>
+          <span className={`pos pos-${currentPlayerPosition(player)}`}>{positionLabel(currentPlayerPosition(player))}</span>
           <span>{throwsBatsText(player.prospect)}</span>
           <span>{player.team.name}</span>
           <span>{player.status}</span>
+          {currentPlayerPosition(player) !== player.prospect.primaryPosition && <span>{positionLabel(player.prospect.primaryPosition)} 출신</span>}
           {player.bullpenRole && <span>{player.bullpenRole}</span>}
           {player.fieldingRole && <span>{player.fieldingRole}</span>}
           <span>{player.yearsSinceDraft}년차</span>
@@ -6595,17 +6607,18 @@ function recordEventsForPlayer(player: CareerPlayerState): Array<Omit<RecordBrea
   };
 
   if (pitcher) {
+    const currentPitcherRole = currentPlayerPosition(player);
     add("perfect", "리그 {{N}}번째 퍼펙트게임", "제구·구위·멘탈이 동시에 맞아야 하는 최상위 희귀 기록", 8, 92, pitcherCommandRecordChance(player, 0.003), 2, 3);
     add("nohit", "리그 {{N}}번째 노히트노런", "구위와 제구가 만든 한 세대급 기록", 6, 89, pitcherCommandRecordChance(player, 0.008), 10, 2);
     add("strikeout-season", "단일 시즌 최다 탈삼진 기록 경신", "구위·구속이 만든 기존 리그 대기록 경신", 8, 92, pitcherStrikeoutRecordChance(player, 0.004), undefined, 4);
     add("strikeout-game", "한 경기 최다 탈삼진 타이기록", "구위와 구속이 폭발한 쇼케이스", 6, 89, pitcherStrikeoutRecordChance(player, 0.007), undefined, 2);
-    add("career-100-win", `통산 ${formatRecordNumber(100)}승 달성`, "체력·제구·멘탈로 오래 버틴 선발 누적 기록", 10, 78, pitcherStarterRecordChance(player, player.prospect.primaryPosition === "SP" ? 0.22 : 0.012), undefined, 4);
-    add("career-150-win", `통산 ${formatRecordNumber(150)}승 달성`, "체력과 제구가 받친 리그 에이스급 장기 기록", 15, 84, pitcherStarterRecordChance(player, player.prospect.primaryPosition === "SP" ? 0.085 : 0.002));
-    add("career-200-win", `통산 ${formatRecordNumber(200)}승 달성`, "체력·제구·멘탈이 모두 필요한 명예의 전당급 기록", 19, 89, pitcherStarterRecordChance(player, player.prospect.primaryPosition === "SP" ? 0.022 : 0));
-    add("career-150-save", `통산 ${formatRecordNumber(150)}세이브 달성`, "구위와 멘탈로 버틴 마무리 장기 기록", 10, 78, pitcherReliefRecordChance(player, player.prospect.primaryPosition === "RP" ? 0.2 : 0.008), undefined, 4);
-    add("career-250-save", `통산 ${formatRecordNumber(250)}세이브 달성`, "구위·제구·멘탈이 받친 대표 마무리 기록", 15, 84, pitcherReliefRecordChance(player, player.prospect.primaryPosition === "RP" ? 0.075 : 0));
-    add("career-200-hold", `통산 ${formatRecordNumber(200)}홀드 달성`, "구위와 멘탈이 만든 불펜 전문성 기록", 10, 77, pitcherReliefRecordChance(player, player.prospect.primaryPosition === "RP" ? 0.18 : 0.01), undefined, 4);
-    add("career-300-hold", `통산 ${formatRecordNumber(300)}홀드 달성`, "제구와 멘탈이 긴 커리어를 지탱한 셋업맨 기록", 15, 83, pitcherReliefRecordChance(player, player.prospect.primaryPosition === "RP" ? 0.065 : 0));
+    add("career-100-win", `통산 ${formatRecordNumber(100)}승 달성`, "체력·제구·멘탈로 오래 버틴 선발 누적 기록", 10, 78, pitcherStarterRecordChance(player, currentPitcherRole === "SP" ? 0.22 : 0.012), undefined, 4);
+    add("career-150-win", `통산 ${formatRecordNumber(150)}승 달성`, "체력과 제구가 받친 리그 에이스급 장기 기록", 15, 84, pitcherStarterRecordChance(player, currentPitcherRole === "SP" ? 0.085 : 0.002));
+    add("career-200-win", `통산 ${formatRecordNumber(200)}승 달성`, "체력·제구·멘탈이 모두 필요한 명예의 전당급 기록", 19, 89, pitcherStarterRecordChance(player, currentPitcherRole === "SP" ? 0.022 : 0));
+    add("career-150-save", `통산 ${formatRecordNumber(150)}세이브 달성`, "구위와 멘탈로 버틴 마무리 장기 기록", 10, 78, pitcherReliefRecordChance(player, currentPitcherRole === "RP" ? 0.2 : 0.008), undefined, 4);
+    add("career-250-save", `통산 ${formatRecordNumber(250)}세이브 달성`, "구위·제구·멘탈이 받친 대표 마무리 기록", 15, 84, pitcherReliefRecordChance(player, currentPitcherRole === "RP" ? 0.075 : 0));
+    add("career-200-hold", `통산 ${formatRecordNumber(200)}홀드 달성`, "구위와 멘탈이 만든 불펜 전문성 기록", 10, 77, pitcherReliefRecordChance(player, currentPitcherRole === "RP" ? 0.18 : 0.01), undefined, 4);
+    add("career-300-hold", `통산 ${formatRecordNumber(300)}홀드 달성`, "제구와 멘탈이 긴 커리어를 지탱한 셋업맨 기록", 15, 83, pitcherReliefRecordChance(player, currentPitcherRole === "RP" ? 0.065 : 0));
   } else {
     add("cycle", "리그 {{N}}번째 사이클링 히트", "컨택·파워·주루가 모두 맞아야 하는 단일 경기 진기록", 6, 82, cycleRecordChance(player, 0.007), 30, 2);
     add("forty-forty", "리그 {{N}}번째 40-40 클럽", "리그사 최상위 파워-스피드 시즌", 8, 92, powerSpeedRecordChance(player, 0.004), 2, 4);
@@ -6953,7 +6966,7 @@ function createExistingTeamSummaries(teams: Team[], players: ExistingLeaguePlaye
     const positionDepth = Object.fromEntries(
       POSITIONS.map((position) => {
         const existingCount = countExistingPlayersAtPosition(active, position);
-        const draftedCount = activeDrafted.filter((player) => player.prospect.primaryPosition === position).length;
+        const draftedCount = activeDrafted.filter((player) => currentPlayerPosition(player) === position).length;
         return [position, { total: existingCount + draftedCount, existing: existingCount }];
       }),
     ) as Partial<Record<Position, { total: number; existing: number }>>;
@@ -7029,12 +7042,12 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       name: player.prospect.name,
       overall: player.currentOverall,
       age: careerAge(player),
-      primaryPosition: player.prospect.primaryPosition,
+      primaryPosition: currentPlayerPosition(player),
       source: "drafted",
       playerId: player.playerId,
       bullpenRole: player.bullpenRole,
       fieldingRole: player.fieldingRole,
-      note: `${player.pick.round}R · ${player.status}`,
+      note: `${player.pick.round}R · ${player.status}${currentPlayerPosition(player) !== player.prospect.primaryPosition ? ` · ${positionLabel(player.prospect.primaryPosition)} 출신` : ""}`,
     }));
   const existingMembers: RosterMember[] = existingPlayersAtPosition(activeExisting, position)
     .map((player) => ({
@@ -7050,20 +7063,172 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
 }
 
 function draftedPlayerCountsForRosterPosition(player: CareerPlayerState, position: Position): boolean {
-  if (position === "SP" || position === "RP") return player.prospect.primaryPosition === position;
-  return player.prospect.primaryPosition === position || player.prospect.secondaryPositions.includes(position);
+  const currentPosition = currentPlayerPosition(player);
+  if (position === "SP" || position === "RP") return currentPosition === position;
+  return currentPosition === position || (!player.currentPosition && player.prospect.secondaryPositions.includes(position));
+}
+
+function currentPlayerPosition(player: CareerPlayerState): Position {
+  return player.currentPosition ?? player.prospect.primaryPosition;
+}
+
+function applyTeamRoleAdjustments(
+  players: CareerPlayerState[],
+  teams: Team[],
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+): CareerPlayerState[] {
+  const nextPlayers = players.map((player) => ({ ...player }));
+  teams.forEach((team) => {
+    const roster = nextPlayers.filter((player) => player.team.id === team.id && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
+    applyPitchingRolePressure(roster, year, userTeamId, watchedIds, nextAfterUserPickIds, news);
+    applyFielderPositionPressure(roster, team, year, userTeamId, watchedIds, nextAfterUserPickIds, news);
+  });
+  return nextPlayers;
+}
+
+function applyPitchingRolePressure(
+  roster: CareerPlayerState[],
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+) {
+  const activePitchers = roster.filter((player) => player.prospect.playerGroup === "pitcher");
+  const relievers = activePitchers.filter((player) => currentPlayerPosition(player) === "RP");
+  const starters = activePitchers.filter((player) => currentPlayerPosition(player) === "SP");
+  const bullpenShortage = relievers.filter((player) => player.currentOverall >= 50 || player.status === "1군").length < 5;
+  const starterShortage = starters.filter((player) => player.currentOverall >= 54 || player.status === "1군").length < 5;
+
+  if (bullpenShortage) {
+    const candidate = starters
+      .filter((player) => !player.eventKeys.includes("team-role-sp-to-rp") && player.yearsSinceDraft >= 1 && player.currentOverall >= 48)
+      .sort((left, right) => starterToBullpenFit(right) - starterToBullpenFit(left))[0];
+    if (candidate && starterToBullpenFit(candidate) >= 56 && Math.random() < 0.72) {
+      candidate.currentPosition = "RP";
+      candidate.bullpenRole = undefined;
+      candidate.eventKeys = [...candidate.eventKeys, "team-role-sp-to-rp"];
+      candidate.transactionLog = [...candidate.transactionLog, `${year}년차 팀 불펜 사정으로 선발 후보→불펜 전환`];
+      addCareerNews(
+        news,
+        candidate,
+        year,
+        3,
+        "보직 전환",
+        `${candidate.prospect.name}, 팀 사정으로 불펜 이동`,
+        `선발 후보로 지명됐지만 팀 불펜 뎁스가 얇아지면서 짧은 이닝에서 먼저 기회를 받게 됐다. 드래프트 당시 포지션 평가는 유지되지만, 현재 활용은 불펜 쪽으로 옮겨간다.`,
+        careerContext(candidate, userTeamId, watchedIds, nextAfterUserPickIds),
+      );
+    }
+  }
+
+  if (starterShortage) {
+    const candidate = relievers
+      .filter((player) => !player.eventKeys.includes("team-role-rp-to-sp") && player.yearsSinceDraft >= 2 && player.currentOverall >= 55)
+      .sort((left, right) => bullpenToStarterFit(right) - bullpenToStarterFit(left))[0];
+    if (candidate && bullpenToStarterFit(candidate) >= 64 && Math.random() < 0.34) {
+      candidate.currentPosition = "SP";
+      candidate.bullpenRole = undefined;
+      candidate.eventKeys = [...candidate.eventKeys, "team-role-rp-to-sp"];
+      candidate.transactionLog = [...candidate.transactionLog, `${year}년차 선발진 공백으로 불펜→선발 전환`];
+      addCareerNews(
+        news,
+        candidate,
+        year,
+        3,
+        "보직 전환",
+        `${candidate.prospect.name}, 선발 전환 테스트`,
+        `선발진 공백이 길어지면서 불펜에서 버티던 투수가 긴 이닝 테스트를 받는다. 체력과 제구가 따라오면 대체선발 이상의 역할도 가능하다는 판단이다.`,
+        careerContext(candidate, userTeamId, watchedIds, nextAfterUserPickIds),
+      );
+    }
+  }
+}
+
+function applyFielderPositionPressure(
+  roster: CareerPlayerState[],
+  team: Team,
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+) {
+  const fielders = roster.filter((player) => player.prospect.playerGroup !== "pitcher" && !player.fieldingRole);
+  const thinPositions = POSITIONS.filter((position) => !["SP", "RP"].includes(position) && teamNeedScore(team, position) >= 66)
+    .sort((left, right) => teamNeedScore(team, right) - teamNeedScore(team, left));
+  thinPositions.slice(0, 2).forEach((position) => {
+    const enoughCurrent = fielders.filter((player) => currentPlayerPosition(player) === position && player.currentOverall >= 50).length >= (position === "C" ? 2 : 3);
+    if (enoughCurrent) return;
+    const candidate = fielders
+      .filter((player) => currentPlayerPosition(player) !== position && !player.eventKeys.includes(`team-position-${position}`))
+      .sort((left, right) => fielderTransitionFit(right, position) - fielderTransitionFit(left, position))[0];
+    if (!candidate || fielderTransitionFit(candidate, position) < 48 || Math.random() > 0.46) return;
+    const from = currentPlayerPosition(candidate);
+    candidate.currentPosition = position;
+    candidate.eventKeys = [...candidate.eventKeys, `team-position-${position}`, "position-change"];
+    candidate.transactionLog = [...candidate.transactionLog, `${year}년차 팀 사정으로 ${positionLabel(from)}→${positionLabel(position)} 전환`];
+    addCareerNews(
+      news,
+      candidate,
+      year,
+      3,
+      "포지션 전환",
+      `${candidate.prospect.name}, ${positionLabel(position)} 전환`,
+      `${candidate.team.shortName}의 ${positionLabel(position)} 뎁스가 얇아지면서 코칭스태프가 포지션 전환을 추진한다. 선수 개인의 원래 평가는 남지만, 당장의 팀 사정이 활용법을 바꾼 사례다.`,
+      careerContext(candidate, userTeamId, watchedIds, nextAfterUserPickIds),
+    );
+  });
+}
+
+function starterToBullpenFit(player: CareerPlayerState): number {
+  const tools = getCareerTools(player);
+  if (!isPitcherTools(tools)) return 0;
+  const starterChance = player.prospect.pitcherStats?.starterChance ?? 55;
+  return player.currentOverall * 0.35 + tools.stuff * 0.22 + tools.velocity * 0.18 + tools.mentality * 0.12 + Math.max(0, 60 - tools.stamina) * 0.18 + Math.max(0, 58 - starterChance) * 0.12;
+}
+
+function bullpenToStarterFit(player: CareerPlayerState): number {
+  const tools = getCareerTools(player);
+  if (!isPitcherTools(tools)) return 0;
+  const starterChance = player.prospect.pitcherStats?.starterChance ?? 38;
+  return player.currentOverall * 0.32 + tools.stamina * 0.28 + tools.command * 0.18 + tools.mentality * 0.12 + starterChance * 0.1;
+}
+
+function fielderTransitionFit(player: CareerPlayerState, target: Position): number {
+  const tools = getCareerTools(player);
+  if (isPitcherTools(tools)) return 0;
+  const current = currentPlayerPosition(player);
+  const currentFit = player.prospect.trueTalent.truePositionFit[target] ?? (player.prospect.secondaryPositions.includes(target) ? 58 : 42);
+  const defensiveCore = tools.defense * 0.34 + tools.speed * 0.18 + tools.mentality * 0.14 + currentFit * 0.22 + player.currentOverall * 0.12;
+  const difficultyPenalty = positionTransitionPenalty(current, target);
+  return defensiveCore - difficultyPenalty + (player.prospect.secondaryPositions.includes(target) ? 10 : 0);
+}
+
+function positionTransitionPenalty(from: Position, to: Position): number {
+  if (from === to) return 0;
+  if (to === "C") return from === "1B" || from === "3B" ? 22 : 34;
+  if (to === "SS") return ["2B", "3B", "CF"].includes(from) ? 8 : 20;
+  if (to === "CF") return ["LF", "RF", "SS", "2B"].includes(from) ? 8 : 18;
+  if (to === "2B" || to === "3B") return ["SS", "2B", "3B"].includes(from) ? 5 : 14;
+  if (["LF", "RF", "1B"].includes(to)) return 3;
+  return 12;
 }
 
 function assignBullpenRoles(players: CareerPlayerState[], teams: Team[]): CareerPlayerState[] {
   const roleMap = new Map<ProspectId, NonNullable<CareerPlayerState["bullpenRole"]>>();
   teams.forEach((team) => {
     const relievers = players
-      .filter((player) => player.team.id === team.id && player.prospect.primaryPosition === "RP" && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출")
+      .filter((player) => player.team.id === team.id && currentPlayerPosition(player) === "RP" && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출")
       .sort((left, right) => bullpenRoleScore(right, "필승조") - bullpenRoleScore(left, "필승조"));
     assignBullpenRoleForTeam(relievers).forEach((role, playerId) => roleMap.set(playerId, role));
   });
   return players.map((player) => {
-    if (player.prospect.primaryPosition !== "RP") return player.bullpenRole ? { ...player, bullpenRole: undefined } : player;
+    if (currentPlayerPosition(player) !== "RP") return player.bullpenRole ? { ...player, bullpenRole: undefined } : player;
     return { ...player, bullpenRole: roleMap.get(player.playerId) };
   });
 }
@@ -7261,7 +7426,7 @@ function isDraftedAllStarEligible(player: CareerPlayerState, division: "드림" 
   if (allStarDivisionForTeam(player.team.id) !== division) return false;
   if (!isFirstTeamAwardEligible(player) || player.currentOverall < 76) return false;
   if (player.fieldingRole === "지명타자") return slot === "지명타자";
-  return matchesAllStarSlot(player.prospect.primaryPosition, slot);
+  return matchesAllStarSlot(currentPlayerPosition(player), slot);
 }
 
 function isExistingAllStarEligible(player: ExistingLeaguePlayer, teams: Team[], division: "드림" | "나눔", slot: string): boolean {
@@ -7417,7 +7582,7 @@ function isDraftedNationalTeamEligible(player: CareerPlayerState, slot: string, 
   if (player.currentOverall < 76) return false;
   if (!isAsianGamesAgeEligible(careerAge(player), context)) return false;
   if (player.fieldingRole === "지명타자") return slot === "지명타자";
-  return matchesNationalTeamSlot(player.prospect.primaryPosition, slot);
+  return matchesNationalTeamSlot(currentPlayerPosition(player), slot);
 }
 
 function isNationalTeamMilitaryEligible(player: CareerPlayerState): boolean {
@@ -7689,7 +7854,7 @@ function isDraftedPlayerAwardEligible(player: CareerPlayerState, category: strin
   const pitcherTitle = ["다승왕", "평균자책점왕", "탈삼진왕", "홀드왕", "세이브왕"].includes(category);
   const hitterTitle = ["타율왕", "홈런왕", "타점왕", "도루왕"].includes(category);
   if (pitcherTitle && player.prospect.playerGroup !== "pitcher") return false;
-  if ((category === "홀드왕" || category === "세이브왕") && player.prospect.primaryPosition !== "RP") return false;
+  if ((category === "홀드왕" || category === "세이브왕") && currentPlayerPosition(player) !== "RP") return false;
   if (hitterTitle && player.prospect.playerGroup === "pitcher") return false;
   if (!matchesGoldenGloveCategory(player, category)) return false;
 
@@ -7701,7 +7866,7 @@ function isDraftedPlayerAwardEligible(player: CareerPlayerState, category: strin
 
 function matchesGoldenGloveCategory(player: CareerPlayerState, category: string): boolean {
   if (!category.startsWith("골든글러브")) return true;
-  const position = player.prospect.primaryPosition;
+  const position = currentPlayerPosition(player);
   if (player.fieldingRole === "지명타자") return category === "골든글러브 지명타자";
   if (category === "골든글러브 투수") return position === "SP";
   if (category === "골든글러브 포수") return position === "C";
@@ -7759,13 +7924,13 @@ function awardFitScore(player: CareerPlayerState, category: string): number {
     return pitcherScore + holdRoleBonus + saveRoleBonus;
   }
   if (category === "골든글러브 지명타자") return pitcher ? 0 : hitterScore + (player.fieldingRole === "지명타자" ? 8 : 0);
-  if (category.startsWith("골든글러브")) return player.currentOverall + (player.prospect.hitterStats?.defensiveGrade ?? player.prospect.pitcherStats?.commandGrade ?? 45) * 0.35 + (category === "골든글러브 투수" && player.prospect.primaryPosition === "SP" ? 3 : 0);
+  if (category.startsWith("골든글러브")) return player.currentOverall + (player.prospect.hitterStats?.defensiveGrade ?? player.prospect.pitcherStats?.commandGrade ?? 45) * 0.35 + (category === "골든글러브 투수" && currentPlayerPosition(player) === "SP" ? 3 : 0);
   if (category === "MVP") return player.currentOverall + (player.eventKeys.includes("mvp") ? 18 : 0);
   return pitcher ? 0 : hitterScore;
 }
 
 function bullpenTitleBonus(player: CareerPlayerState, title: "hold" | "save"): number {
-  if (player.prospect.primaryPosition !== "RP") return title === "save" ? -8 : -4;
+  if (currentPlayerPosition(player) !== "RP") return title === "save" ? -8 : -4;
   if (title === "save") {
     if (player.bullpenRole === "마무리") return 16;
     if (player.bullpenRole === "셋업맨") return 2;
@@ -8224,17 +8389,12 @@ function applyAgingRoleTransition(
   const tools = getCareerTools(player);
   const age = careerAge(player);
 
-  if (isPitcherTools(tools) && player.prospect.primaryPosition === "SP" && !player.eventKeys.includes("starter-to-bullpen")) {
+  if (isPitcherTools(tools) && currentPlayerPosition(player) === "SP" && !player.eventKeys.includes("starter-to-bullpen")) {
     const stamina = tools.stamina;
     const starterChance = player.prospect.pitcherStats?.starterChance ?? 55;
     const rolePressure = clampNumber((age - 30) * 0.035 + Math.max(0, 56 - stamina) * 0.012 + Math.max(0, 45 - starterChance) * 0.006, 0, 0.48);
     if (age >= 31 && stamina <= 58 && player.currentOverall >= 52 && Math.random() < rolePressure) {
-      player.prospect = {
-        ...player.prospect,
-        primaryPosition: "RP",
-        secondaryPositions: uniquePositions(["SP", ...player.prospect.secondaryPositions.filter((position) => position !== "RP")]),
-        archetype: player.prospect.archetype.includes("불펜") ? player.prospect.archetype : `${player.prospect.archetype} · 불펜 전환`,
-      };
+      player.currentPosition = "RP";
       player.bullpenRole = undefined;
       player.eventKeys = [...player.eventKeys, "starter-to-bullpen"];
       player.transactionLog = [...player.transactionLog, `${year}년차 체력 저하로 선발→불펜 전환`];
@@ -8652,7 +8812,7 @@ function applyRosterLimitCuts(
     while (roster.length > TEAM_ROSTER_LIMIT) {
       const positionCounts = countRosterPositions(roster);
       const cuttable = roster.filter((player) => {
-        const position = player.prospect.primaryPosition;
+        const position = currentPlayerPosition(player);
         if (player.yearsSinceDraft <= player.releaseProtectionUntilYear) return false;
         return (positionCounts[position] ?? 0) > MIN_POSITION_DEPTH_FOR_CUTS[position];
       });
@@ -8690,7 +8850,7 @@ function isRosterCountedPlayer(player: CareerPlayerState): boolean {
 function countRosterPositions(players: CareerPlayerState[]): Record<Position, number> {
   return POSITIONS.reduce(
     (counts, position) => {
-      counts[position] = players.filter((player) => player.prospect.primaryPosition === position).length;
+      counts[position] = players.filter((player) => currentPlayerPosition(player) === position).length;
       return counts;
     },
     {} as Record<Position, number>,
@@ -8698,7 +8858,7 @@ function countRosterPositions(players: CareerPlayerState[]): Record<Position, nu
 }
 
 function rosterCutScore(player: CareerPlayerState, positionCounts: Record<Position, number>): number {
-  const position = player.prospect.primaryPosition;
+  const position = currentPlayerPosition(player);
   const surplus = Math.max(0, (positionCounts[position] ?? 0) - MIN_POSITION_DEPTH_FOR_CUTS[position]);
   const positionScarcityProtection = surplus <= 1 ? 8 : surplus <= 2 ? 4 : 0;
   const draftInvestmentProtection = player.pick.round <= 2 ? 4 : player.pick.round <= 5 ? 2 : 0;
@@ -8981,7 +9141,7 @@ function updateTeamNeedsAfterSeason(teams: Team[], players: CareerPlayerState[],
 
     POSITIONS.forEach((position) => {
       const current = nextDepth[position];
-      const positionPlayers = players.filter((player) => player.team.id === team.id && player.prospect.primaryPosition === position);
+      const positionPlayers = players.filter((player) => player.team.id === team.id && currentPlayerPosition(player) === position);
       const regular = positionPlayers.find((player) => player.overall >= 64 && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
       const failed = positionPlayers.find((player) => player.yearsPro >= 2 && (player.overall < 50 || player.status === "방출" || player.status === "은퇴" || player.status === "해외진출"));
       const next: PositionDepth = { ...current, changeReason: undefined };
