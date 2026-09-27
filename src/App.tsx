@@ -29,7 +29,7 @@ import { createNewGame } from "./game/simulation/gameLoop";
 import { advanceHighSchoolPlayerPool } from "./game/generation/prospects";
 import { createSeededRng } from "./game/generation/random";
 import { clearSaveState, compactSaveState, JSON_SAVE_FILENAME, readSaveState, writeSaveState } from "./game/storage/saveState";
-import { roundGrade, roundTo } from "./game/utils/math";
+import { reportReliabilityPercent, roundGrade, roundTo } from "./game/utils/math";
 import type { DraftPickId, Position, ProspectId, TeamId } from "./game/types/common";
 import type { DraftPick } from "./game/types/draft";
 import type { GameState } from "./game/types/game";
@@ -5881,7 +5881,7 @@ function schoolTraitLabel(trait: SchoolTrait): string {
 }
 
 function schoolProfileText(prospect: Prospect): string {
-  const reportReliability = formatPercent(prospect.schoolReportReliabilityBase);
+  const reportReliability = formatPercentFromWhole(Math.round(reportReliabilityPercent(prospect.schoolReportReliabilityBase)));
   if (prospect.sourceType === "overseas-returnee") {
     return `${prospect.school}는 원 소속 고교입니다. 해외 경력은 ${prospectDraftPathSummary(prospect)}로 별도 평가해야 합니다. 고교 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${reportReliability}입니다.`;
   }

@@ -282,6 +282,7 @@ export type Prospect = {
   schoolTraits: SchoolTrait[];
   schoolDevelopmentBias: SchoolDevelopmentBias;
   schoolLeagueStrength: number;
+  /** Percentage points (0-100); legacy saves may contain a 0-1 ratio. */
   schoolReportReliabilityBase: number;
   schoolYear: SchoolYear;
   highSchoolStatus: "active" | "draft-eligible" | "graduated";

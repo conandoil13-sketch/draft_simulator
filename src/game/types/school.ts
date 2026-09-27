@@ -34,6 +34,7 @@ export type SchoolProfile = {
   leagueStrength: number;
   annualProspectVolume: number;
   developmentBias: SchoolDevelopmentBias;
+  /** Percentage points (0-100); legacy saves may contain a 0-1 ratio. */
   reportReliabilityBase: number;
   traits: SchoolTrait[];
   positionBias: Partial<Record<Position, number>>;

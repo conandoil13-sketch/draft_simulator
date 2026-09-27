@@ -1,7 +1,7 @@
 import type { Grade20to80, Position, ProspectId } from "../types/common";
 import type { DraftClassQualityProfile, HiddenTalentProfile, HighSchoolCareerLogEntry, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, MetricQuality, MonthlyFormPoint, PhysicalProfile, PitchArsenalEntry, PitcherDevelopmentTools, PitcherStats, PitchingArmSlot, PitchType, PlayerGroup, Prospect, ProspectAccolade, ProspectDataTier, ProspectRiskTag, SchoolYear, ScoutGrade, SeasonFormCycle, VisibleScoutingReport } from "../types/player";
 import type { SchoolProfile } from "../types/school";
-import { clamp, roundGrade, roundTo } from "../utils/math";
+import { clamp, reportReliabilityPercent, roundGrade, roundTo } from "../utils/math";
 import { generateKoreanName } from "./names";
 import { createVisibleScoutingReport, dataTierFromPublicRank } from "./scouting";
 import { pickOne, randomFloat, randomInt, weightedPick, type Rng } from "./random";
@@ -414,7 +414,7 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
     schoolRegion: program.region,
     schoolTier: prospect.schoolTier === "small" ? "normal" : prospect.schoolTier,
     schoolLeagueStrength: Math.round(clamp(prospect.schoolLeagueStrength + randomFloat(rng, 3, 9), 45, 92)),
-    schoolReportReliabilityBase: clamp(prospect.schoolReportReliabilityBase + randomFloat(rng, 0.08, 0.18), 0.38, 0.92),
+    schoolReportReliabilityBase: clamp(reportReliabilityPercent(prospect.schoolReportReliabilityBase) + randomFloat(rng, 8, 18), 38, 92),
     archetype: collegeArchetype(prospect, collegeDraftRoute),
     leagueLevel: prospect.leagueLevel === "정보 부족" ? "보통" : prospect.leagueLevel,
     collegeCommitRisk: 0,
@@ -517,7 +517,7 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     schoolRegion: prospect.schoolRegion,
     schoolTier: prospect.schoolTier,
     schoolLeagueStrength: Math.round(clamp(prospect.schoolLeagueStrength + randomFloat(rng, 0, 12), 40, 94)),
-    schoolReportReliabilityBase: clamp(prospect.schoolReportReliabilityBase + randomFloat(rng, -0.06, 0.08), 0.28, 0.82),
+    schoolReportReliabilityBase: clamp(reportReliabilityPercent(prospect.schoolReportReliabilityBase) + randomFloat(rng, -6, 8), 28, 82),
     archetype: `해외 복귀 ${POSITION_NAMES[prospect.primaryPosition]}`,
     leagueLevel: "정보 부족",
     collegeCommitRisk: 0,
@@ -1491,7 +1491,7 @@ function applyHighSchoolEventToVisible(report: VisibleScoutingReport, event: Hig
     summaryPrefix = "부상 유급으로 드래프트 예정 시점이 밀렸다.";
   } else if (event.type === "transfer") {
     rankPenalty = nextSchool && nextSchool.leagueStrength >= 70 ? -7 : 4;
-    confidenceShift = nextSchool && nextSchool.reportReliabilityBase >= 0.7 ? 0.04 : -0.02;
+    confidenceShift = nextSchool && reportReliabilityPercent(nextSchool.reportReliabilityBase) >= 70 ? 0.04 : -0.02;
     summaryPrefix = nextSchool ? `${nextSchool.name} 전학으로 리그와 출전 환경이 바뀌었다.` : "전학 변수로 평가 환경이 바뀌었다.";
   } else if (event.type === "college-risk") {
     addRisk("signability");

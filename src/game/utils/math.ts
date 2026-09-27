@@ -17,3 +17,9 @@ export function toRange(center: number, spread: number, min = 0, max = 100): { m
     max: clamp(Math.round(center + spread), min, max),
   };
 }
+
+// School report reliability uses percentage points (0-100).
+// Older college/overseas saves stored a ratio (0-1).
+export function reportReliabilityPercent(value: number): number {
+  return clamp(value <= 1 ? value * 100 : value, 0, 100);
+}
