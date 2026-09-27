@@ -3797,29 +3797,29 @@ function TagList({ values, fallback, variant }: { values: string[]; fallback: st
 }
 
 function ProspectHighSchoolTracking({ prospect }: { prospect: Prospect }) {
-  const snapshots = [...prospect.highSchoolSnapshots].sort((left, right) => left.schoolYear - right.schoolYear || left.year - right.year);
+  const snapshots = [...prospect.highSchoolSnapshots].sort((left, right) => left.year - right.year || left.schoolYear - right.schoolYear || trackingStageLabel(left).localeCompare(trackingStageLabel(right)));
   const cumulative = createHighSchoolCumulativeStats(snapshots);
-  if (snapshots.length === 0) return <p className="empty">아직 고교 추적 기록이 없습니다.</p>;
+  if (snapshots.length === 0) return <p className="empty">아직 스카우팅 추적 기록이 없습니다.</p>;
 
   return (
     <div className="school-tracking-list">
       <details className="tracking-detail" open>
         <summary>
           <strong>누적</strong>
-          <span>{snapshots.length}개 학년 관찰 · {cumulative.primaryLine}</span>
+          <span>{snapshots.length}개 시즌 관찰 · {cumulative.primaryLine}</span>
         </summary>
         <div className="tracking-detail-body">
           {cumulative.hitterStats && <HitterLine stats={cumulative.hitterStats} />}
           {cumulative.pitcherStats && <PitcherLine stats={cumulative.pitcherStats} />}
-          <List values={prospect.highSchoolCareerLog.map((entry) => `${entry.year}년 ${entry.schoolYear}학년 · ${highSchoolLogTypeLabel(entry.type)} · ${entry.headline}`)} fallback="누적 커리어 로그 없음" />
+          <List values={prospect.highSchoolCareerLog.map((entry) => `${entry.year}년 ${trackingLogStageLabel(entry)} · ${highSchoolLogTypeLabel(entry.type)} · ${entry.headline}`)} fallback="누적 커리어 로그 없음" />
         </div>
       </details>
       {snapshots.map((snapshot) => {
-        const logs = prospect.highSchoolCareerLog.filter((entry) => entry.year === snapshot.year && entry.schoolYear === snapshot.schoolYear);
+        const logs = prospect.highSchoolCareerLog.filter((entry) => entry.year === snapshot.year && trackingLogStageLabel(entry) === trackingStageLabel(snapshot));
         return (
-          <details className="tracking-detail" key={`${snapshot.year}-${snapshot.schoolYear}`}>
+          <details className="tracking-detail" key={`${snapshot.year}-${trackingStageLabel(snapshot)}`}>
             <summary>
-              <strong>{snapshot.schoolYear}학년</strong>
+              <strong>{trackingStageLabel(snapshot)}</strong>
               <span>{snapshot.year}년 · {snapshot.primaryStat} · {snapshot.note}</span>
             </summary>
             <div className="tracking-detail-body">
@@ -3838,6 +3838,14 @@ function ProspectHighSchoolTracking({ prospect }: { prospect: Prospect }) {
       })}
     </div>
   );
+}
+
+function trackingStageLabel(snapshot: { schoolYear: number; stageLabel?: string }): string {
+  return snapshot.stageLabel ?? `${snapshot.schoolYear}학년`;
+}
+
+function trackingLogStageLabel(entry: { schoolYear: number; stageLabel?: string }): string {
+  return entry.stageLabel ?? `${entry.schoolYear}학년`;
 }
 
 function createHighSchoolCumulativeStats(snapshots: HighSchoolYearSnapshot[]): { primaryLine: string; hitterStats?: HitterStats; pitcherStats?: PitcherStats } {
@@ -5873,6 +5881,9 @@ function schoolTraitLabel(trait: SchoolTrait): string {
 }
 
 function schoolProfileText(prospect: Prospect): string {
+  if (prospect.sourceType === "overseas-returnee") {
+    return `${prospect.school}는 원 소속 고교입니다. 해외 경력은 ${prospectDraftPathSummary(prospect)}로 별도 평가해야 합니다. 고교 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${prospect.schoolReportReliabilityBase}%입니다.`;
+  }
   const traits = prospect.schoolTraits.map(schoolTraitLabel).join(", ");
   return `${prospect.school}는 ${prospect.schoolRegion} ${schoolTierLabel(prospect.schoolTier)} 학교입니다. 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${prospect.schoolReportReliabilityBase}%이며 ${SCHOOL_BIAS_LABELS[prospect.schoolDevelopmentBias]} 성향이 선수 생성과 평가 표본에 반영됩니다.${traits ? ` 주요 특성: ${traits}.` : ""}`;
 }

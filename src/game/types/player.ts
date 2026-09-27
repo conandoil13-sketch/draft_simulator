@@ -236,6 +236,7 @@ export type HighSchoolCareerLogType =
 export type HighSchoolCareerLogEntry = {
   year: number;
   schoolYear: SchoolYear;
+  stageLabel?: string;
   type: HighSchoolCareerLogType;
   headline: string;
   body: string;
@@ -245,6 +246,7 @@ export type HighSchoolCareerLogEntry = {
 export type HighSchoolYearSnapshot = {
   year: number;
   schoolYear: SchoolYear;
+  stageLabel?: string;
   publicRank: number;
   scoutGrade: ScoutGrade;
   confidence: number;

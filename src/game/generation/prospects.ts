@@ -384,6 +384,9 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
   const polishedTalent = adjustTalentForCollege(prospect.trueTalent);
   const routeLabel = collegeRouteLabel(collegeDraftRoute);
   const routeNote = collegeRouteNote(collegeDraftRoute, collegeYear, prospect);
+  const highSchoolFirstYear = year - collegeYear - 2;
+  const highSchoolSnapshots = rebaseHighSchoolSnapshots(prospect.highSchoolSnapshots, highSchoolFirstYear);
+  const highSchoolLogs = rebaseHighSchoolLogs(prospect.highSchoolCareerLog, highSchoolFirstYear);
   const visible = {
     ...prospect.visible,
     confidence: clamp(prospect.visible.confidence + randomFloat(rng, collegeDraftRoute === "early-entry" ? 0.04 : 0.08, collegeDraftRoute === "redraft" ? 0.16 : 0.22), 0.32, 0.94),
@@ -394,14 +397,14 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
     oneLine: `${program.name} ${routeLabel} ${POSITION_NAMES[prospect.primaryPosition]} 후보. 즉전성은 확인됐지만 장기 고점은 별도 판단이 필요하다.`,
     growthProjection: `입단 직후 퓨처스 적응 기간은 짧을 수 있다. 다만 ${collegeDraftRoute === "early-entry" ? "어린 나이에 대학 실적을 앞세워 나온 케이스라 프로 적응 속도" : "고교 선수보다 나이가 많아 잠재력보다 역할 적합도"}를 우선 확인해야 한다.`,
   };
-  return {
+  const collegeProspect: Prospect = {
     ...prospect,
     sourceType: "college",
     collegeProgramType: program.type,
     collegeYear,
     collegeDraftRoute,
     draftEligibilityNote: `${program.type === "two-year" ? "2년제 전문대" : "4년제 대학"} ${collegeYear}학년 · ${routeLabel}${collegeDraftRoute === "redraft" ? " · 고교 미지명 후 대학 재도전" : ""}`,
-    highSchoolEntryYear: year - 5,
+    highSchoolEntryYear: highSchoolFirstYear,
     age,
     schoolId: `college-${program.name}`,
     school: program.name,
@@ -416,16 +419,29 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
     draftHype: Math.round(clamp(prospect.draftHype + randomFloat(rng, -4, 10), 0, 100)),
     trueTalent: polishedTalent,
     visible,
+    highSchoolSnapshots,
     highSchoolCareerLog: [
-      ...prospect.highSchoolCareerLog,
+      ...highSchoolLogs,
       {
         year,
         schoolYear: 3,
+        stageLabel: `${program.name} ${collegeYear}학년`,
         type: "showcase",
         headline: `${prospect.name}, ${routeLabel} 지명 후보로 재평가`,
         body: `${program.name}에서 ${routeNote} 고교 시절 기존 리포트와 대학 성적을 함께 대조해야 한다. 고점보다 즉전성과 포지션 적합도가 평가의 중심이다.`,
         importance: prospect.visible.publicRank <= 100 ? 4 : 3,
       },
+    ],
+  };
+  return {
+    ...collegeProspect,
+    highSchoolSnapshots: [
+      ...highSchoolSnapshots,
+      ...createPostHighSchoolSnapshots(rng, collegeProspect, year, collegeYear, "college", program.name),
+    ],
+    highSchoolCareerLog: [
+      ...collegeProspect.highSchoolCareerLog,
+      ...createPostHighSchoolLogs(collegeProspect, year, collegeYear, "college", program.name),
     ],
   };
 }
@@ -453,6 +469,9 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
   ]);
   const overseasYears = randomInt(rng, 2, 6);
   const age = createOverseasReturneeAge(rng, overseasYears, lifestyle);
+  const highSchoolFirstYear = year - overseasYears - 2;
+  const highSchoolSnapshots = rebaseHighSchoolSnapshots(prospect.highSchoolSnapshots, highSchoolFirstYear);
+  const highSchoolLogs = rebaseHighSchoolLogs(prospect.highSchoolCareerLog, highSchoolFirstYear);
   const adjustedTalent = adjustTalentForOverseasReturnee(prospect.trueTalent, returnReason, lifestyle, age);
   const riskTags = uniqueRiskTags([
     ...prospect.visible.riskTags,
@@ -470,7 +489,7 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     oneLine: `해외 복귀 후보. ${returnReason} 이후 국내 무대에서 다시 평가받는 리스크/즉전성 혼합 프로필.`,
     growthProjection: `해외 시스템 경험은 적응에 도움이 될 수 있다. 다만 ${age >= 27 ? "나이와 역할 전환" : "생활 패턴과 실전 감각"} 문제가 반복되면 기대치와 결과의 차이가 크게 벌어질 수 있다.`,
   };
-  return {
+  const returneeProspect: Prospect = {
     ...prospect,
     sourceType: "overseas-returnee",
     overseasPath: path,
@@ -478,12 +497,12 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     overseasLifestyle: lifestyle,
     returnReason,
     draftEligibilityNote: `${overseasPathLabel(path)} ${overseasYears}년 · ${overseasLifestyleLabel(lifestyle)} · 국내 복귀`,
-    highSchoolEntryYear: year - 6,
+    highSchoolEntryYear: highSchoolFirstYear,
     age,
-    schoolId: `overseas-${path}`,
-    school: overseasPathLabel(path),
-    schoolRegion: "서울권",
-    schoolTier: "normal",
+    schoolId: prospect.schoolId,
+    school: prospect.school,
+    schoolRegion: prospect.schoolRegion,
+    schoolTier: prospect.schoolTier,
     schoolLeagueStrength: Math.round(clamp(prospect.schoolLeagueStrength + randomFloat(rng, 0, 12), 40, 94)),
     schoolReportReliabilityBase: clamp(prospect.schoolReportReliabilityBase + randomFloat(rng, -0.06, 0.08), 0.28, 0.82),
     archetype: `해외 복귀 ${POSITION_NAMES[prospect.primaryPosition]}`,
@@ -493,11 +512,13 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     draftHype: Math.round(clamp(prospect.draftHype + randomFloat(rng, 12, 30), 0, 100)),
     trueTalent: adjustedTalent,
     visible,
+    highSchoolSnapshots,
     highSchoolCareerLog: [
-      ...prospect.highSchoolCareerLog,
+      ...highSchoolLogs,
       {
         year,
         schoolYear: 3,
+        stageLabel: `${overseasPathLabel(path)} ${overseasYears}년차`,
         type: "showcase",
         headline: `${prospect.name}, 해외 경험 후 국내 드래프트 복귀`,
         body: `${overseasPathLabel(path)}에서 ${overseasYears}년을 보냈고, 최근 생활 패턴은 ${overseasLifestyleLabel(lifestyle)}에 가깝다. ${returnReason} 사유로 국내 지명 시장에 들어왔으며 나이와 실전 공백이 동시에 평가 변수다.`,
@@ -505,6 +526,128 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
       },
     ],
   };
+  return {
+    ...returneeProspect,
+    highSchoolSnapshots: [
+      ...highSchoolSnapshots,
+      ...createPostHighSchoolSnapshots(rng, returneeProspect, year, overseasYears, "overseas", overseasPathLabel(path)),
+    ],
+    highSchoolCareerLog: [
+      ...returneeProspect.highSchoolCareerLog,
+      ...createPostHighSchoolLogs(returneeProspect, year, overseasYears, "overseas", overseasPathLabel(path)),
+    ],
+  };
+}
+
+function createPostHighSchoolSnapshots(
+  rng: Rng,
+  prospect: Prospect,
+  draftYear: number,
+  seasons: number,
+  context: "college" | "overseas",
+  label: string,
+): HighSchoolYearSnapshot[] {
+  return Array.from({ length: seasons }, (_, index) => {
+    const season = index + 1;
+    const progress = season / seasons;
+    const performanceShift = context === "college"
+      ? -0.035 + progress * 0.06 + randomFloat(rng, -0.018, 0.018)
+      : -0.055 + progress * 0.075 + randomFloat(rng, -0.03, 0.02);
+    const volumeScale = context === "college"
+      ? 0.78 + progress * 0.34
+      : 0.56 + progress * 0.38;
+    const hitterStats = prospect.hitterStats ? createPostHighSchoolHitterStats(prospect.hitterStats, performanceShift, volumeScale) : undefined;
+    const pitcherStats = prospect.pitcherStats ? createPostHighSchoolPitcherStats(prospect.pitcherStats, performanceShift, volumeScale, context) : undefined;
+    const stageLabel = context === "college" ? `${label} ${season}학년` : `${label} ${season}년차`;
+    const note = context === "college"
+      ? season === seasons ? "대학 최종 표본" : "대학리그 중간 표본"
+      : season === seasons ? "해외 복귀 직전 표본" : "해외리그 제한 표본";
+    return {
+      year: draftYear - (seasons - season),
+      schoolYear: 3,
+      stageLabel,
+      publicRank: Math.round(clamp(prospect.visible.publicRank + Math.round((1 - progress) * 18) + (context === "overseas" ? 8 : 0), 1, 400)),
+      scoutGrade: prospect.visible.scoutGrade,
+      confidence: clamp(prospect.visible.confidence - (context === "overseas" ? 0.08 : 0.04) + progress * 0.08, 0.16, 0.96),
+      heightCm: prospect.physical.heightCm,
+      weightKg: prospect.physical.weightKg,
+      primaryStat: highSchoolPrimaryStat({ hitterStats, pitcherStats }),
+      note,
+      hitterStats,
+      pitcherStats,
+    };
+  });
+}
+
+function rebaseHighSchoolSnapshots(snapshots: HighSchoolYearSnapshot[], firstYear: number): HighSchoolYearSnapshot[] {
+  return snapshots.map((snapshot) => ({
+    ...snapshot,
+    year: firstYear + snapshot.schoolYear - 1,
+  }));
+}
+
+function rebaseHighSchoolLogs(logs: HighSchoolCareerLogEntry[], firstYear: number): HighSchoolCareerLogEntry[] {
+  return logs.map((entry) => ({
+    ...entry,
+    year: firstYear + entry.schoolYear - 1,
+  }));
+}
+
+function createPostHighSchoolLogs(
+  prospect: Prospect,
+  draftYear: number,
+  seasons: number,
+  context: "college" | "overseas",
+  label: string,
+): HighSchoolCareerLogEntry[] {
+  return Array.from({ length: seasons }, (_, index) => {
+    const season = index + 1;
+    const stageLabel = context === "college" ? `${label} ${season}학년` : `${label} ${season}년차`;
+    return {
+      year: draftYear - (seasons - season),
+      schoolYear: 3,
+      stageLabel,
+      type: "showcase",
+      headline: context === "college"
+        ? `${prospect.name}, ${stageLabel} 표본 축적`
+        : `${prospect.name}, ${stageLabel} 경력 누적`,
+      body: context === "college"
+        ? "고교 시절 리포트와 비교할 수 있는 대학리그 기록이 쌓였다. 나이와 역할 검증을 함께 봐야 한다."
+        : "해외 경력은 이름값만큼 확실한 기록으로 남지 않을 수 있다. 출전 환경, 실전 공백, 복귀 사유를 함께 해석해야 한다.",
+      importance: season === seasons ? 4 : 2,
+    };
+  });
+}
+
+function createPostHighSchoolHitterStats(stats: HitterStats, performanceShift: number, volumeScale: number): HitterStats {
+  const next = { ...stats, reliability: { ...stats.reliability } };
+  next.games = Math.max(8, Math.round(stats.games * volumeScale));
+  next.plateAppearances = Math.max(24, Math.round(stats.plateAppearances * volumeScale));
+  if (next.average !== null) next.average = roundTo(clamp(next.average + performanceShift, 0.16, 0.46), 3);
+  if (next.onBase !== null) next.onBase = roundTo(clamp(next.onBase + performanceShift * 0.9, 0.2, 0.56), 3);
+  if (next.slugging !== null) next.slugging = roundTo(clamp(next.slugging + performanceShift * 1.25, 0.22, 0.86), 3);
+  if (next.ops !== null) next.ops = roundTo((next.onBase ?? 0) + (next.slugging ?? 0), 3);
+  if (next.homeRuns !== null) next.homeRuns = Math.max(0, Math.round(next.homeRuns * volumeScale * clamp(1 + performanceShift * 3, 0.72, 1.28)));
+  if (next.doubles !== null) next.doubles = Math.max(0, Math.round(next.doubles * volumeScale));
+  if (next.stolenBases !== null) next.stolenBases = Math.max(0, Math.round(next.stolenBases * volumeScale));
+  if (next.strikeoutRate !== null) next.strikeoutRate = roundTo(clamp(next.strikeoutRate - performanceShift * 0.45, 0.045, 0.38), 3);
+  if (next.walkRate !== null) next.walkRate = roundTo(clamp(next.walkRate + performanceShift * 0.28, 0.01, 0.23), 3);
+  return next;
+}
+
+function createPostHighSchoolPitcherStats(stats: PitcherStats, performanceShift: number, volumeScale: number, context: "college" | "overseas"): PitcherStats {
+  const next = { ...stats, reliability: { ...stats.reliability }, pitchArsenal: stats.pitchArsenal ? stats.pitchArsenal.map((pitch) => ({ ...pitch })) : undefined };
+  next.games = Math.max(5, Math.round(stats.games * volumeScale));
+  if (next.innings !== null) next.innings = roundTo(Math.max(8, next.innings * volumeScale), 1);
+  if (next.era !== null) next.era = roundTo(clamp(next.era - performanceShift * 3.8 + (context === "overseas" ? 0.25 : 0), 0.4, 8.6), 2);
+  if (next.maxVelocityKph !== null) next.maxVelocityKph = Math.round(clamp(next.maxVelocityKph + performanceShift * 8, 120, 160));
+  if (next.averageVelocityKph !== null) next.averageVelocityKph = Math.round(clamp(next.averageVelocityKph + performanceShift * 6, 116, 155));
+  if (next.strikeoutsPerNine !== null) next.strikeoutsPerNine = roundTo(clamp(next.strikeoutsPerNine + performanceShift * 3.4, 2.2, 17.8), 1);
+  if (next.walksPerNine !== null) next.walksPerNine = roundTo(clamp(next.walksPerNine - performanceShift * 1.9, 0.8, 9.5), 1);
+  if (next.whip !== null) next.whip = roundTo(clamp(next.whip - performanceShift * 0.48 + (context === "overseas" ? 0.04 : 0), 0.66, 2.25), 2);
+  if (next.commandGrade !== null) next.commandGrade = roundGrade(next.commandGrade + performanceShift * 18);
+  if (next.starterChance !== null) next.starterChance = Math.round(clamp(next.starterChance + performanceShift * 35, 1, 98));
+  return next;
 }
 
 function createCollegeYearForRoute(
