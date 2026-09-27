@@ -374,6 +374,8 @@ function App() {
   const trackingAddRows = useMemo(() => createTrackingAddRows(careerPlayers, careerYearBucket), [careerPlayers, careerYearBucket]);
   const trackingSummary = useMemo(() => createTrackingSummary(careerPlayers, careerNews, userTeamId), [careerNews, careerPlayers, userTeamId]);
   const releaseRows = useMemo(() => careerPlayers.filter((player) => player.status === "방출" || player.status === "은퇴" || player.status === "해외진출").sort((left, right) => right.yearsSinceDraft - left.yearsSinceDraft || left.pick.overall - right.pick.overall), [careerPlayers]);
+  const hasTrackingHistory = careerPlayers.length > 0 || careerNews.length > 0;
+  const hasLeagueHistory = seasonResults.length > 0 || pickTradeEvents.length > 0 || careerPlayers.length > 0;
   const legacySummary = useMemo(() => createScoutLegacySummary(scoutName || "스카우터", selectedTeam, careerPlayers, seasonResults, yearlyAwardRows, allRecordBreakerRows, careerYear), [allRecordBreakerRows, careerPlayers, careerYear, scoutName, seasonResults, selectedTeam, yearlyAwardRows]);
   const revealedPredraftStages = predraftUserAction ? PREDRAFT_STAGES.slice(0, predraftStageIndex) : [];
   const visiblePredraftIntelEvents = predraftIntelEvents.filter((event) => event.type === "타임 회의" || revealedPredraftStages.includes(event.stage));
@@ -2051,7 +2053,7 @@ function App() {
             </section>
           )}
 
-          {activeTab === "tracking" && phase === "complete" && (
+          {activeTab === "tracking" && (phase === "complete" || hasTrackingHistory) && (
             <>
             <section className="tracking-overview">
               <div>
@@ -2388,7 +2390,7 @@ function App() {
             </>
           )}
 
-          {activeTab === "league-history" && phase === "complete" && (
+          {activeTab === "league-history" && (phase === "complete" || hasLeagueHistory) && (
             <section className="season-section">
               <div className="career-head">
                 <div>
@@ -2926,7 +2928,7 @@ function App() {
             </section>
           )}
 
-          {activeTab === "league-history" && phase !== "complete" && (
+          {activeTab === "league-history" && phase !== "complete" && !hasLeagueHistory && (
             <section className="fan-section">
               <h2>리그 히스토리</h2>
               <p className="empty">드래프트가 끝나고 시즌을 진행하면 순위, 다음 해 지명권, 트레이드, 리그 회고가 여기에 쌓입니다.</p>
@@ -2940,7 +2942,7 @@ function App() {
             </section>
           )}
 
-          {activeTab === "tracking" && phase !== "complete" && (
+          {activeTab === "tracking" && phase !== "complete" && !hasTrackingHistory && (
             <section className="fan-section">
               <h2>선수 추적</h2>
               <p className="empty">드래프트가 끝나고 시즌을 진행하면 뉴스피드, 선수별 커리어 로그, 추적 관리가 여기에 쌓입니다.</p>
