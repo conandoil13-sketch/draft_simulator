@@ -2482,6 +2482,8 @@ function App() {
                             <tr>
                               <th>순위</th>
                               <th>구단</th>
+                              <th>승-무-패</th>
+                              <th>승률</th>
                               <th>전력 점수</th>
                               <th>시즌 성과</th>
                               <th>전년 대비</th>
@@ -2503,6 +2505,8 @@ function App() {
                                 <tr key={`current-${result.seasonYear}-${result.teamId}`} className={result.teamId === userTeamId ? "user-team-row" : ""}>
                                   <td className="num">{result.rank}</td>
                                   <td className="name-cell">{team?.name}</td>
+                                  <td className="num">{formatSeasonRecord(result)}</td>
+                                  <td className="num">{formatWinningPct(result)}</td>
                                   <td className="num">{formatScore(result.strengthScore)}</td>
                                   <td className="num">{formatScore(result.seasonPerformanceScore)}</td>
                                   <td>{result.previousRank ? formatRankChange(rankChange) : "첫 시즌"}</td>
@@ -2573,6 +2577,8 @@ function App() {
                       <tr>
                         <th>시즌</th>
                         <th>최종 순위</th>
+                        <th>승-무-패</th>
+                        <th>승률</th>
                         <th>전력 점수</th>
                         <th>시즌 성과</th>
                         <th>다음 1R 순번</th>
@@ -2586,6 +2592,8 @@ function App() {
                           <tr key={`history-${result.seasonYear}`}>
                             <td>{result.seasonYear}</td>
                             <td className="num">{result.rank}</td>
+                            <td className="num">{formatSeasonRecord(result)}</td>
+                            <td className="num">{formatWinningPct(result)}</td>
                             <td className="num">{formatScore(result.strengthScore)}</td>
                             <td className="num">{formatScore(result.seasonPerformanceScore)}</td>
                             <td className="num">{result.nextFirstRoundPick}순위</td>
@@ -8999,6 +9007,10 @@ function simulateTeamSeason(
         previousRank: previous?.rank,
         strengthScore,
         seasonPerformanceScore,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+        winningPct: 0,
         baseStrength,
         draftImpact,
         prospectContribution,
@@ -9012,10 +9024,75 @@ function simulateTeamSeason(
     .sort((left, right) => right.seasonPerformanceScore - left.seasonPerformanceScore)
     .map((result, index) => ({ ...result, rank: index + 1 }));
 
-  return ranked.map((result) => ({
+  const records = createSeasonRecords(ranked, seasonYear);
+
+  return ranked.map((result, index) => ({
     ...result,
+    ...records[index],
     nextFirstRoundPick: ranked.length - result.rank + 1,
   }));
+}
+
+function createSeasonRecords(results: TeamSeasonResult[], seasonYear: number): Array<Pick<TeamSeasonResult, "wins" | "draws" | "losses" | "winningPct">> {
+  const games = 144;
+  const averageScore = results.reduce((total, result) => total + result.seasonPerformanceScore, 0) / Math.max(1, results.length);
+  const records = results.map((result, index) => {
+    const rankShape = (results.length - 1 - index) / Math.max(1, results.length - 1) - 0.5;
+    const scoreEdge = (result.seasonPerformanceScore - averageScore) * 0.0072;
+    const drawBase = 4 + Math.round(deterministicNoise(`draws-${seasonYear}-${result.teamId}`) * 6);
+    const draws = Math.round(clampNumber(drawBase + (Math.abs(scoreEdge) < 0.03 ? 1 : 0), 1, 12));
+    const pctNoise = (deterministicNoise(`record-${seasonYear}-${result.teamId}`) - 0.5) * 0.035;
+    const rawPct = clampNumber(0.5 + rankShape * 0.19 + scoreEdge + pctNoise, 0.34, 0.66);
+    return {
+      wins: Math.round((games - draws) * rawPct),
+      draws,
+      losses: 0,
+      winningPct: 0,
+    };
+  });
+
+  ensureEvenDrawTotal(records);
+  const totalDraws = records.reduce((total, record) => total + record.draws, 0);
+  const targetWins = Math.round((games * results.length - totalDraws) / 2);
+  let winDelta = targetWins - records.reduce((total, record) => total + record.wins, 0);
+  const direction = winDelta >= 0 ? 1 : -1;
+
+  while (winDelta !== 0) {
+    let changed = false;
+    for (let index = 0; index < records.length && winDelta !== 0; index += 1) {
+      const record = records[direction > 0 ? index : records.length - 1 - index];
+      const nextWins = record.wins + direction;
+      const maxWins = games - record.draws - 36;
+      const minWins = 35;
+      if (nextWins >= minWins && nextWins <= maxWins) {
+        record.wins = nextWins;
+        winDelta -= direction;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  return records.map((record) => {
+    const losses = games - record.draws - record.wins;
+    return {
+      ...record,
+      losses,
+      winningPct: record.wins / Math.max(1, record.wins + losses),
+    };
+  });
+}
+
+function ensureEvenDrawTotal(records: Array<{ draws: number; wins: number }>): void {
+  const totalDraws = records.reduce((total, record) => total + record.draws, 0);
+  if (totalDraws % 2 === 0) return;
+  const increaseTarget = records.find((record) => record.draws < 12);
+  if (increaseTarget) {
+    increaseTarget.draws += 1;
+    return;
+  }
+  const decreaseTarget = records.find((record) => record.draws > 1);
+  if (decreaseTarget) decreaseTarget.draws -= 1;
 }
 
 function createNextDraftPicksFromSeason(results: TeamSeasonResult[], draftYear: number, rounds: number): DraftPick[] {
@@ -9509,6 +9586,32 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function formatScore(value: number): string {
   return value.toFixed(1);
+}
+
+function seasonRecordForDisplay(result: TeamSeasonResult): Pick<TeamSeasonResult, "wins" | "draws" | "losses" | "winningPct"> {
+  if (Number.isFinite(result.wins) && Number.isFinite(result.draws) && Number.isFinite(result.losses)) {
+    return {
+      wins: result.wins,
+      draws: result.draws,
+      losses: result.losses,
+      winningPct: Number.isFinite(result.winningPct) ? result.winningPct : result.wins / Math.max(1, result.wins + result.losses),
+    };
+  }
+  const games = 144;
+  const draws = 5;
+  const rankPct = clampNumber(0.64 - (result.rank - 1) * 0.03 + (result.seasonPerformanceScore - 65) * 0.002, 0.36, 0.64);
+  const wins = Math.round((games - draws) * rankPct);
+  const losses = games - draws - wins;
+  return { wins, draws, losses, winningPct: wins / Math.max(1, wins + losses) };
+}
+
+function formatSeasonRecord(result: TeamSeasonResult): string {
+  const record = seasonRecordForDisplay(result);
+  return `${record.wins}승 ${record.draws}무 ${record.losses}패`;
+}
+
+function formatWinningPct(result: TeamSeasonResult): string {
+  return seasonRecordForDisplay(result).winningPct.toFixed(3).replace(/^0/, "");
 }
 
 function formatSigned(value: number): string {

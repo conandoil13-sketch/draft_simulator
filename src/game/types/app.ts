@@ -310,6 +310,10 @@ export type TeamSeasonResult = {
   previousRank?: number;
   strengthScore: number;
   seasonPerformanceScore: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  winningPct: number;
   baseStrength: number;
   draftImpact: number;
   prospectContribution: number;
