@@ -1671,6 +1671,7 @@ function App() {
                       <th>주전</th>
                       <th>플래툰/백업</th>
                       <th>2군/육성</th>
+                      <th>부상/군복무</th>
                       <th>드래프트 출신</th>
                       <th>기존 선수층</th>
                       <th>보강 필요도</th>
@@ -1683,6 +1684,7 @@ function App() {
                         <td>{row.starters.length ? row.starters.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">공백</span>}</td>
                         <td>{row.platoon.length ? row.platoon.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">부족</span>}</td>
                         <td>{row.secondTeam.length ? row.secondTeam.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">얇음</span>}</td>
+                        <td>{row.inactive.length ? row.inactive.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">없음</span>}</td>
                         <td className="num">{row.draftedCount}</td>
                         <td className="num">{row.existingCount}</td>
                         <td><span className={`need-badge need-${needLevel(row.need)}`}>{needLevelLabel(row.need)} {row.need}</span></td>
@@ -6984,12 +6986,12 @@ function createExistingTeamSummaries(teams: Team[], players: ExistingLeaguePlaye
 
 function createCurrentRosterRows(team: Team | undefined, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[]) {
   if (!team) {
-    return POSITIONS.map((position) => ({ position, starters: [], platoon: [], secondTeam: [], draftedCount: 0, existingCount: 0, need: 0 }));
+    return POSITIONS.map((position) => ({ position, starters: [], platoon: [], secondTeam: [], inactive: [], draftedCount: 0, existingCount: 0, need: 0 }));
   }
 
   const usedStarterIds = new Set<string>();
   return POSITIONS.map((position) => {
-    const { draftedMembers, existingMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position);
+    const { draftedMembers, existingMembers, inactiveMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position);
     const members = [...draftedMembers, ...existingMembers].sort((left, right) => right.overall - left.overall || (left.age ?? 99) - (right.age ?? 99));
     if (position === "RP") {
       const bullpenMembers = assignBullpenRolesToRosterMembers(members);
@@ -7005,6 +7007,7 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
         starters,
         platoon,
         secondTeam,
+        inactive: inactiveMembers,
         draftedCount: draftedMembers.length,
         existingCount: existingMembers.length,
         need: calculateRosterAwareNeed(team.positionDepth[position]?.need ?? 0, bullpenMembers, position),
@@ -7025,6 +7028,7 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
       starters,
       platoon,
       secondTeam,
+      inactive: inactiveMembers,
       draftedCount: draftedMembers.length,
       existingCount: existingMembers.length,
       need: calculateRosterAwareNeed(team.positionDepth[position]?.need ?? 0, members, position),
@@ -7032,10 +7036,12 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
   });
 }
 
-function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[], position: Position): { draftedMembers: RosterMember[]; existingMembers: RosterMember[] } {
+function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[], position: Position): { draftedMembers: RosterMember[]; existingMembers: RosterMember[]; inactiveMembers: RosterMember[] } {
   const activeExisting = existingPlayers.filter((player) => player.teamId === team.id && player.status === "active");
   const activeDrafted = careerPlayers.filter((player) => player.team.id === team.id && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
+  const inactivePlayers = activeDrafted.filter((player) => currentPlayerPosition(player) === position && isInactiveRosterPlayer(player));
   const draftedMembers: RosterMember[] = activeDrafted
+    .filter((player) => !isInactiveRosterPlayer(player))
     .filter((player) => draftedPlayerCountsForRosterPosition(player, position))
     .map((player) => ({
       id: `drafted-${player.playerId}`,
@@ -7049,6 +7055,20 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       fieldingRole: player.fieldingRole,
       note: `${player.pick.round}R · ${player.status}${currentPlayerPosition(player) !== player.prospect.primaryPosition ? ` · ${positionLabel(player.prospect.primaryPosition)} 출신` : ""}`,
     }));
+  const inactiveMembers: RosterMember[] = inactivePlayers
+    .sort((left, right) => inactiveRosterRank(left) - inactiveRosterRank(right) || right.currentOverall - left.currentOverall)
+    .map((player) => ({
+      id: `inactive-${player.playerId}`,
+      name: player.prospect.name,
+      overall: player.currentOverall,
+      age: careerAge(player),
+      primaryPosition: currentPlayerPosition(player),
+      source: "drafted",
+      playerId: player.playerId,
+      bullpenRole: player.bullpenRole,
+      fieldingRole: player.fieldingRole,
+      note: inactiveRosterNote(player),
+    }));
   const existingMembers: RosterMember[] = existingPlayersAtPosition(activeExisting, position)
     .map((player) => ({
       id: player.id,
@@ -7059,7 +7079,24 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       source: "existing",
       note: "기존 선수층",
     }));
-  return { draftedMembers, existingMembers };
+  return { draftedMembers, existingMembers, inactiveMembers };
+}
+
+function isInactiveRosterPlayer(player: CareerPlayerState): boolean {
+  return player.status === "부상" || player.militaryStatus === "serving";
+}
+
+function inactiveRosterRank(player: CareerPlayerState): number {
+  if (player.status === "부상") return 0;
+  if (player.militaryType === "상무") return 1;
+  return 2;
+}
+
+function inactiveRosterNote(player: CareerPlayerState): string {
+  if (player.status === "부상") return `부상자 엔트리 · OVR ${player.currentOverall}`;
+  if (player.militaryStatus === "serving" && player.militaryType === "상무") return `상무 복무 · ${player.militaryServiceUntilYear ?? "-"}년 복귀 예정`;
+  if (player.militaryStatus === "serving") return `현역 복무 · ${player.militaryServiceUntilYear ?? "-"}년 복귀 예정`;
+  return player.status;
 }
 
 function draftedPlayerCountsForRosterPosition(player: CareerPlayerState, position: Position): boolean {
