@@ -90,17 +90,17 @@ const ACCOLADES: ProspectAccolade[] = [
   { id: "mlb-direct-signing", label: "MLB 직행 계약", category: "reputation", meaning: "드래프트 전 해외 구단과 계약해 국내 지명 대상에서 빠진다. 국내 구단 입장에서는 최종 회의 직전 사라지는 대형 변수다.", reputationBoost: 16, hypeBoost: 24 },
 ];
 
-export function generateDraftClass(rng: Rng, year: number, count = 360): Prospect[] {
+export function generateDraftClass(rng: Rng, year: number, count = 400): Prospect[] {
   const schools = generateSchoolPool(rng);
   return createDraftClassFromSchools(rng, year, count, schools).prospects;
 }
 
-export function generateDraftClassWithSchools(rng: Rng, year: number, count = 360): { prospects: Prospect[]; schools: SchoolProfile[]; classQuality: DraftClassQualityProfile } {
+export function generateDraftClassWithSchools(rng: Rng, year: number, count = 400): { prospects: Prospect[]; schools: SchoolProfile[]; classQuality: DraftClassQualityProfile } {
   const schools = generateSchoolPool(rng);
   return createDraftClassFromSchools(rng, year, count, schools);
 }
 
-export function generateHighSchoolPlayerPoolWithSchools(rng: Rng, year: number, count = 360): { prospects: Prospect[]; schools: SchoolProfile[]; classQuality: DraftClassQualityProfile } {
+export function generateHighSchoolPlayerPoolWithSchools(rng: Rng, year: number, count = 400): { prospects: Prospect[]; schools: SchoolProfile[]; classQuality: DraftClassQualityProfile } {
   const schools = generateSchoolPool(rng);
   const draftClass = createDraftClassFromSchools(rng, year, count, schools, 3);
   const secondYearClass = createDraftClassFromSchools(rng, year + 1, count, schools, 2);
@@ -331,8 +331,8 @@ function createDraftClassQuality(rng: Rng): DraftClassQualityProfile {
 }
 
 function applyNonHighSchoolEntrants(rng: Rng, year: number, prospects: Prospect[]): Prospect[] {
-  const collegeCount = randomInt(rng, 20, 32);
-  const returneeCount = rng.next() < 0.22 ? 0 : rng.next() < 0.76 ? 1 : rng.next() < 0.94 ? 2 : 3;
+  const collegeCount = randomInt(rng, 28, 44);
+  const returneeCount = rng.next() < 0.18 ? 0 : rng.next() < 0.68 ? 1 : rng.next() < 0.9 ? 2 : rng.next() < 0.98 ? 3 : 4;
   const protectedRanks = new Set(prospects.filter((prospect) => prospect.archetype === "고교특급" || prospect.visible.publicRank <= 18).map((prospect) => prospect.visible.publicRank));
   const collegeRanks = pickUniqueRanks(
     rng,
@@ -368,38 +368,48 @@ function pickUniqueRanks(rng: Rng, ranks: number[], count: number): Set<number> 
 }
 
 function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Prospect {
-  const collegeYear = weightedPick(rng, [
-    { value: 2 as const, weight: 2 },
-    { value: 3 as const, weight: 7 },
-    { value: 4 as const, weight: 11 },
-  ]);
-  const school = pickOne(rng, COLLEGE_PROGRAMS);
-  const age = roundTo(randomFloat(rng, collegeYear === 2 ? 19.8 : collegeYear === 3 ? 20.6 : 21.4, collegeYear === 2 ? 20.8 : collegeYear === 3 ? 21.8 : 23.2), 1);
+  const program = pickOne(rng, COLLEGE_PROGRAMS);
+  const fourYearEarlyEligible = program.type === "four-year" && prospect.visible.publicRank <= 115 && (prospect.reputation + prospect.draftHype >= 78 || prospect.visible.scoutGrade === "A" || prospect.visible.scoutGrade === "B");
+  const earlyEntry = fourYearEarlyEligible && rng.next() < 0.42;
+  const redraft = !earlyEntry && rng.next() < (prospect.visible.publicRank >= 95 ? 0.86 : 0.68);
+  const collegeDraftRoute: NonNullable<Prospect["collegeDraftRoute"]> = redraft
+    ? "redraft"
+    : program.type === "two-year"
+      ? "junior-college"
+      : earlyEntry
+        ? "early-entry"
+        : "regular";
+  const collegeYear = createCollegeYearForRoute(rng, collegeDraftRoute, program.type);
+  const age = createCollegeDraftAge(rng, collegeDraftRoute, collegeYear);
   const polishedTalent = adjustTalentForCollege(prospect.trueTalent);
+  const routeLabel = collegeRouteLabel(collegeDraftRoute);
+  const routeNote = collegeRouteNote(collegeDraftRoute, collegeYear, prospect);
   const visible = {
     ...prospect.visible,
-    confidence: clamp(prospect.visible.confidence + randomFloat(rng, 0.08, 0.2), 0.32, 0.94),
-    riskTags: uniqueRiskTags(prospect.visible.riskTags.filter((tag) => tag !== "low-record-trust")),
-    strengths: uniqueStringsLocal(["대학리그 표본", ...prospect.visible.strengths]).slice(0, 4),
-    weaknesses: uniqueStringsLocal([...prospect.visible.weaknesses, polishedTalent.potential <= 66 ? "성장 여지 제한" : "나이 대비 고점 검증 필요"]).slice(0, 4),
-    summary: `${collegeYear}학년 대학 선수. 고교 후보보다 표본과 역할 검증은 많지만, 성장 곡선은 더 짧게 봐야 한다. ${prospect.visible.summary}`,
-    oneLine: `대학 ${collegeYear}학년 ${POSITION_NAMES[prospect.primaryPosition]} 후보. 즉전성은 확인됐지만 장기 고점은 별도 판단이 필요하다.`,
-    growthProjection: `입단 직후 퓨처스 적응 기간은 짧을 수 있다. 다만 고교 선수보다 나이가 많아 잠재력보다 역할 적합도를 우선 확인해야 한다.`,
+    confidence: clamp(prospect.visible.confidence + randomFloat(rng, collegeDraftRoute === "early-entry" ? 0.04 : 0.08, collegeDraftRoute === "redraft" ? 0.16 : 0.22), 0.32, 0.94),
+    riskTags: collegeRiskTags(prospect, collegeDraftRoute),
+    strengths: uniqueStringsLocal([routeLabel, "대학리그 표본", ...prospect.visible.strengths]).slice(0, 4),
+    weaknesses: uniqueStringsLocal([...prospect.visible.weaknesses, collegeDraftRoute === "early-entry" ? "얼리드래프트 검증 표본" : polishedTalent.potential <= 66 ? "성장 여지 제한" : "나이 대비 고점 검증 필요"]).slice(0, 4),
+    summary: `${program.type === "two-year" ? "2년제 전문대" : "4년제 대학"} ${collegeYear}학년 후보. ${routeNote} 고교 시절 기록과 대학 표본을 함께 봐야 하는 선수다. 성장 곡선은 고교생보다 짧지만 역할 검증은 더 많다. ${prospect.visible.summary}`,
+    oneLine: `${program.name} ${routeLabel} ${POSITION_NAMES[prospect.primaryPosition]} 후보. 즉전성은 확인됐지만 장기 고점은 별도 판단이 필요하다.`,
+    growthProjection: `입단 직후 퓨처스 적응 기간은 짧을 수 있다. 다만 ${collegeDraftRoute === "early-entry" ? "어린 나이에 대학 실적을 앞세워 나온 케이스라 프로 적응 속도" : "고교 선수보다 나이가 많아 잠재력보다 역할 적합도"}를 우선 확인해야 한다.`,
   };
   return {
     ...prospect,
     sourceType: "college",
+    collegeProgramType: program.type,
     collegeYear,
-    draftEligibilityNote: `대학 ${collegeYear}학년 드래프트 참가`,
+    collegeDraftRoute,
+    draftEligibilityNote: `${program.type === "two-year" ? "2년제 전문대" : "4년제 대학"} ${collegeYear}학년 · ${routeLabel}${collegeDraftRoute === "redraft" ? " · 고교 미지명 후 대학 재도전" : ""}`,
     highSchoolEntryYear: year - 5,
     age,
-    schoolId: `college-${school}`,
-    school,
-    schoolRegion: pickOne(rng, ["서울권", "경기·인천권", "충청권", "대구·경북권", "부산·울산·경남권"]),
+    schoolId: `college-${program.name}`,
+    school: program.name,
+    schoolRegion: program.region,
     schoolTier: prospect.schoolTier === "small" ? "normal" : prospect.schoolTier,
     schoolLeagueStrength: Math.round(clamp(prospect.schoolLeagueStrength + randomFloat(rng, 3, 9), 45, 92)),
     schoolReportReliabilityBase: clamp(prospect.schoolReportReliabilityBase + randomFloat(rng, 0.08, 0.18), 0.38, 0.92),
-    archetype: collegeArchetype(prospect),
+    archetype: collegeArchetype(prospect, collegeDraftRoute),
     leagueLevel: prospect.leagueLevel === "정보 부족" ? "보통" : prospect.leagueLevel,
     collegeCommitRisk: 0,
     reputation: Math.round(clamp(prospect.reputation + randomFloat(rng, 3, 13), 0, 100)),
@@ -412,8 +422,8 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
         year,
         schoolYear: 3,
         type: "showcase",
-        headline: `${prospect.name}, 대학리그 지명 후보로 재평가`,
-        body: "대학 무대에서 역할과 표본을 쌓은 뒤 드래프트 풀에 다시 들어왔다. 고점보다 즉전성과 포지션 적합도가 평가의 중심이다.",
+        headline: `${prospect.name}, ${routeLabel} 지명 후보로 재평가`,
+        body: `${program.name}에서 ${routeNote} 고교 시절 기존 리포트와 대학 성적을 함께 대조해야 한다. 고점보다 즉전성과 포지션 적합도가 평가의 중심이다.`,
         importance: prospect.visible.publicRank <= 100 ? 4 : 3,
       },
     ],
@@ -434,9 +444,16 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     { value: "병역/국내 복귀" as const, weight: 2 },
     { value: "계약 만료" as const, weight: 3 },
   ]);
+  const lifestyle = weightedPick(rng, [
+    { value: "regular-starter" as const, weight: 3 },
+    { value: "bench-depth" as const, weight: 4 },
+    { value: "rehab-focused" as const, weight: returnReason === "부상" ? 6 : 2 },
+    { value: "travel-grind" as const, weight: 4 },
+    { value: "training-only" as const, weight: 2 },
+  ]);
   const overseasYears = randomInt(rng, 2, 6);
-  const age = roundTo(randomFloat(rng, 21.8 + overseasYears * 0.35, 24.8 + overseasYears * 0.55), 1);
-  const adjustedTalent = adjustTalentForOverseasReturnee(prospect.trueTalent, returnReason);
+  const age = createOverseasReturneeAge(rng, overseasYears, lifestyle);
+  const adjustedTalent = adjustTalentForOverseasReturnee(prospect.trueTalent, returnReason, lifestyle, age);
   const riskTags = uniqueRiskTags([
     ...prospect.visible.riskTags,
     returnReason === "부상" ? "injury-history" : "low-record-trust",
@@ -447,19 +464,20 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
     confidence: clamp(prospect.visible.confidence + randomFloat(rng, -0.03, 0.1), 0.24, 0.82),
     riskLevel: prospect.visible.riskLevel === "low" ? "medium" : prospect.visible.riskLevel,
     riskTags,
-    strengths: uniqueStringsLocal([overseasPathLabel(path), ...prospect.visible.strengths]).slice(0, 4),
-    weaknesses: uniqueStringsLocal([returnReason === "부상" ? "건강 검증 필요" : "국내 실전 공백", ...prospect.visible.weaknesses]).slice(0, 4),
-    summary: `${overseasPathLabel(path)} 경력 후 국내 드래프트 복귀. 이름값과 툴은 남아 있지만, 실전 공백과 복귀 사유를 분리해서 봐야 한다. ${prospect.visible.summary}`,
+    strengths: uniqueStringsLocal([overseasPathLabel(path), overseasLifestyleLabel(lifestyle), ...prospect.visible.strengths]).slice(0, 4),
+    weaknesses: uniqueStringsLocal([returnReason === "부상" ? "건강 검증 필요" : age >= 27 ? "나이와 실전 공백" : "국내 실전 공백", ...prospect.visible.weaknesses]).slice(0, 4),
+    summary: `${overseasPathLabel(path)} 경력 후 국내 드래프트 복귀. ${overseasLifestyleLabel(lifestyle)} 생활을 거쳤고, 나이 ${age}세라는 변수가 평가의 중심이다. 이름값과 툴은 남아 있지만, 실전 공백과 복귀 사유를 분리해서 봐야 한다. ${prospect.visible.summary}`,
     oneLine: `해외 복귀 후보. ${returnReason} 이후 국내 무대에서 다시 평가받는 리스크/즉전성 혼합 프로필.`,
-    growthProjection: "이미 해외 시스템을 경험한 만큼 적응 속도는 빠를 수 있지만, 실패 원인이 반복되면 기대치와 결과의 차이가 크게 벌어질 수 있다.",
+    growthProjection: `해외 시스템 경험은 적응에 도움이 될 수 있다. 다만 ${age >= 27 ? "나이와 역할 전환" : "생활 패턴과 실전 감각"} 문제가 반복되면 기대치와 결과의 차이가 크게 벌어질 수 있다.`,
   };
   return {
     ...prospect,
     sourceType: "overseas-returnee",
     overseasPath: path,
     overseasYears,
+    overseasLifestyle: lifestyle,
     returnReason,
-    draftEligibilityNote: `${overseasPathLabel(path)} ${overseasYears}년 후 국내 복귀`,
+    draftEligibilityNote: `${overseasPathLabel(path)} ${overseasYears}년 · ${overseasLifestyleLabel(lifestyle)} · 국내 복귀`,
     highSchoolEntryYear: year - 6,
     age,
     schoolId: `overseas-${path}`,
@@ -482,11 +500,65 @@ function createOverseasReturneeProspect(rng: Rng, year: number, prospect: Prospe
         schoolYear: 3,
         type: "showcase",
         headline: `${prospect.name}, 해외 경험 후 국내 드래프트 복귀`,
-        body: `${overseasPathLabel(path)}에서 ${overseasYears}년을 보낸 뒤 ${returnReason} 사유로 국내 지명 시장에 들어왔다. 이름값과 실전 공백이 동시에 평가 변수다.`,
+        body: `${overseasPathLabel(path)}에서 ${overseasYears}년을 보냈고, 최근 생활 패턴은 ${overseasLifestyleLabel(lifestyle)}에 가깝다. ${returnReason} 사유로 국내 지명 시장에 들어왔으며 나이와 실전 공백이 동시에 평가 변수다.`,
         importance: prospect.visible.publicRank <= 120 ? 4 : 3,
       },
     ],
   };
+}
+
+function createCollegeYearForRoute(
+  _rng: Rng,
+  route: NonNullable<Prospect["collegeDraftRoute"]>,
+  programType: NonNullable<Prospect["collegeProgramType"]>,
+): 2 | 4 {
+  if (programType === "two-year") return 2;
+  if (route === "early-entry") return 2;
+  return 4;
+}
+
+function createCollegeDraftAge(rng: Rng, route: NonNullable<Prospect["collegeDraftRoute"]>, collegeYear: 2 | 4): number {
+  if (route === "junior-college") return roundTo(randomFloat(rng, 20.0, 21.4), 1);
+  if (route === "early-entry") return roundTo(randomFloat(rng, 19.7, 20.8), 1);
+  if (route === "redraft") {
+    return collegeYear === 2 ? roundTo(randomFloat(rng, 20.1, 21.8), 1) : roundTo(randomFloat(rng, 21.5, 24.4), 1);
+  }
+  return collegeYear === 2 ? roundTo(randomFloat(rng, 20.0, 21.5), 1) : roundTo(randomFloat(rng, 21.5, 23.6), 1);
+}
+
+function collegeRouteLabel(route: NonNullable<Prospect["collegeDraftRoute"]>): string {
+  if (route === "junior-college") return "전문대 드래프트";
+  if (route === "early-entry") return "얼리드래프트";
+  if (route === "redraft") return "재도전 드래프트";
+  return "정규 드래프트";
+}
+
+function collegeRouteNote(route: NonNullable<Prospect["collegeDraftRoute"]>, collegeYear: 2 | 4, prospect: Prospect): string {
+  if (route === "junior-college") return `고교 드래프트 이후 2년제 전문대 ${collegeYear}학년으로 짧은 대학 경력 안에서 지명 시장에 들어왔다.`;
+  if (route === "early-entry") return `대학 1~2학년 성적과 툴 평가가 좋아 ${collegeYear}학년 시점에 얼리드래프트를 신청했다.`;
+  if (route === "redraft") return `고교 드래프트에서 지명받지 못한 뒤 대학에서 표본을 쌓아 다시 지명 시장에 돌아왔다.`;
+  return `고교 드래프트 이후 4년제 대학에서 누적 표본을 쌓은 뒤 정규 지명 대상이 됐다.`;
+}
+
+function collegeRiskTags(prospect: Prospect, route: NonNullable<Prospect["collegeDraftRoute"]>): ProspectRiskTag[] {
+  const tags: ProspectRiskTag[] = prospect.visible.riskTags.filter((tag) => tag !== "low-record-trust" && tag !== "signability");
+  if (route === "early-entry") tags.push("small-sample");
+  if (route === "redraft") tags.push("low-record-trust");
+  return uniqueRiskTags(tags);
+}
+
+function createOverseasReturneeAge(rng: Rng, overseasYears: number, lifestyle: NonNullable<Prospect["overseasLifestyle"]>): number {
+  const lifestyleShift = lifestyle === "regular-starter" ? -0.4 : lifestyle === "training-only" ? 0.7 : lifestyle === "rehab-focused" ? 0.9 : 0.2;
+  return roundTo(randomFloat(rng, 21.4 + overseasYears * 0.45 + lifestyleShift, 24.6 + overseasYears * 0.62 + lifestyleShift), 1);
+}
+
+function overseasLifestyleLabel(lifestyle?: Prospect["overseasLifestyle"]): string {
+  if (lifestyle === "regular-starter") return "주전급 출전";
+  if (lifestyle === "bench-depth") return "벤치·대기 전력";
+  if (lifestyle === "rehab-focused") return "재활 중심 생활";
+  if (lifestyle === "travel-grind") return "이동 많은 마이너 생활";
+  if (lifestyle === "training-only") return "훈련 위주 생활";
+  return "해외 생활";
 }
 
 function adjustTalentForCollege(talent: HiddenTalentProfile): HiddenTalentProfile {
@@ -500,19 +572,24 @@ function adjustTalentForCollege(talent: HiddenTalentProfile): HiddenTalentProfil
   };
 }
 
-function adjustTalentForOverseasReturnee(talent: HiddenTalentProfile, returnReason: Prospect["returnReason"]): HiddenTalentProfile {
+function adjustTalentForOverseasReturnee(talent: HiddenTalentProfile, returnReason: Prospect["returnReason"], lifestyle: Prospect["overseasLifestyle"], age: number): HiddenTalentProfile {
   const injuryPenalty = returnReason === "부상" ? 0.1 : 0;
+  const lifestyleAdaptation = lifestyle === "regular-starter" ? 0.06 : lifestyle === "training-only" ? -0.04 : lifestyle === "rehab-focused" ? -0.02 : 0;
+  const agePenalty = Math.max(0, age - 25.5) * 0.025;
   return {
     ...talent,
-    currentAbility: Math.round(clamp(talent.currentAbility + 4, 24, 84)),
-    potential: Math.round(clamp(talent.potential + (returnReason === "출전 기회 부족" ? 2 : -1), 34, 91)),
+    currentAbility: Math.round(clamp(talent.currentAbility + 4 - agePenalty * 8, 24, 84)),
+    potential: Math.round(clamp(talent.potential + (returnReason === "출전 기회 부족" ? 2 : -1) - agePenalty * 12, 34, 91)),
     injuryRisk: clamp(talent.injuryRisk + injuryPenalty + 0.04, 0.04, 0.96),
-    volatility: clamp(talent.volatility + 0.1, 0.12, 0.98),
-    proAdaptation: clamp(talent.proAdaptation + 0.03, 0.08, 0.96),
+    volatility: clamp(talent.volatility + 0.1 + agePenalty, 0.12, 0.98),
+    proAdaptation: clamp(talent.proAdaptation + 0.03 + lifestyleAdaptation, 0.08, 0.96),
   };
 }
 
-function collegeArchetype(prospect: Prospect): string {
+function collegeArchetype(prospect: Prospect, route: NonNullable<Prospect["collegeDraftRoute"]>): string {
+  if (route === "early-entry") return `대학 얼리 ${POSITION_NAMES[prospect.primaryPosition]}`;
+  if (route === "redraft") return `대학 재도전 ${POSITION_NAMES[prospect.primaryPosition]}`;
+  if (route === "junior-college") return `전문대 ${POSITION_NAMES[prospect.primaryPosition]}`;
   if (prospect.primaryPosition === "RP") return "대학 즉전 불펜";
   if (prospect.primaryPosition === "SP") return "대학 선발 후보";
   if (["C", "SS", "CF"].includes(prospect.primaryPosition)) return "대학 수비형 즉전 후보";
@@ -535,23 +612,52 @@ function uniqueStringsLocal(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
-const COLLEGE_PROGRAMS = [
-  "고려대",
-  "연세대",
-  "성균관대",
-  "한양대",
-  "동국대",
-  "중앙대",
-  "건국대",
-  "경희대",
-  "홍익대",
-  "단국대",
-  "동아대",
-  "영남대",
-  "원광대",
-  "인하대",
-  "송원대",
-  "동의대",
+const COLLEGE_PROGRAMS: Array<{ name: string; type: "two-year" | "four-year"; region: Prospect["schoolRegion"] }> = [
+  { name: "고려대", type: "four-year", region: "서울권" },
+  { name: "연세대", type: "four-year", region: "서울권" },
+  { name: "성균관대", type: "four-year", region: "서울권" },
+  { name: "한양대", type: "four-year", region: "서울권" },
+  { name: "동국대", type: "four-year", region: "서울권" },
+  { name: "중앙대", type: "four-year", region: "서울권" },
+  { name: "건국대", type: "four-year", region: "서울권" },
+  { name: "경희대", type: "four-year", region: "서울권" },
+  { name: "홍익대", type: "four-year", region: "서울권" },
+  { name: "서울대", type: "four-year", region: "서울권" },
+  { name: "사이버한국외대", type: "four-year", region: "서울권" },
+  { name: "서울문화예술대", type: "four-year", region: "서울권" },
+  { name: "단국대", type: "four-year", region: "경기·인천권" },
+  { name: "인하대", type: "four-year", region: "경기·인천권" },
+  { name: "용인예술과학대", type: "two-year", region: "경기·인천권" },
+  { name: "동원대", type: "two-year", region: "경기·인천권" },
+  { name: "장안대", type: "two-year", region: "경기·인천권" },
+  { name: "신안산대", type: "two-year", region: "경기·인천권" },
+  { name: "여주대", type: "two-year", region: "경기·인천권" },
+  { name: "경민대", type: "two-year", region: "경기·인천권" },
+  { name: "강릉영동대", type: "two-year", region: "강원권" },
+  { name: "대덕대", type: "two-year", region: "대전·세종권" },
+  { name: "신성대", type: "two-year", region: "충청권" },
+  { name: "충북보건과학대", type: "two-year", region: "충청권" },
+  { name: "청운대", type: "four-year", region: "충청권" },
+  { name: "원광대", type: "four-year", region: "전북권" },
+  { name: "우석대", type: "four-year", region: "전북권" },
+  { name: "전주기전대", type: "two-year", region: "전북권" },
+  { name: "한일장신대", type: "four-year", region: "전북권" },
+  { name: "송원대", type: "four-year", region: "광주·전남권" },
+  { name: "동강대", type: "two-year", region: "광주·전남권" },
+  { name: "목포과학대", type: "two-year", region: "광주·전남권" },
+  { name: "영남대", type: "four-year", region: "대구·경북권" },
+  { name: "계명대", type: "four-year", region: "대구·경북권" },
+  { name: "경일대", type: "four-year", region: "대구·경북권" },
+  { name: "구미대", type: "two-year", region: "대구·경북권" },
+  { name: "수성대", type: "two-year", region: "대구·경북권" },
+  { name: "동아대", type: "four-year", region: "부산·울산·경남권" },
+  { name: "동의대", type: "four-year", region: "부산·울산·경남권" },
+  { name: "경성대", type: "four-year", region: "부산·울산·경남권" },
+  { name: "경남대", type: "four-year", region: "부산·울산·경남권" },
+  { name: "동의과학대", type: "two-year", region: "부산·울산·경남권" },
+  { name: "동원과학기술대", type: "two-year", region: "부산·울산·경남권" },
+  { name: "부산과학기술대", type: "two-year", region: "부산·울산·경남권" },
+  { name: "제주관광대", type: "two-year", region: "제주권" },
 ];
 
 function createProspect(rng: Rng, year: number, publicRank: number, school: SchoolProfile, classQuality: DraftClassQualityProfile, highSchoolSpecial = false, schoolYear: SchoolYear = 3): Prospect {
@@ -1062,7 +1168,7 @@ function seasonCycleReport(kind: SeasonFormCycle["kind"], pattern: SeasonFormCyc
 
 function advanceHighSchoolVisibleReport(report: VisibleScoutingReport, rng: Rng, growth: number, schoolYear: SchoolYear): VisibleScoutingReport {
   const rankMove = Math.round(growth <= -1 ? randomFloat(rng, 8, 26) : growth >= 4 ? randomFloat(rng, -34, -12) : growth >= 2 ? randomFloat(rng, -18, -4) : randomFloat(rng, -5, 9));
-  const publicRank = Math.round(clamp(report.publicRank + rankMove, 1, 360));
+  const publicRank = Math.round(clamp(report.publicRank + rankMove, 1, 400));
   const confidenceGain = schoolYear === 3 ? 0.14 : 0.08;
   const trend = growth >= 3 ? "rising" : growth <= -1 ? "falling" : "steady";
   const riskTags = [...report.riskTags];
@@ -1228,7 +1334,7 @@ function applyHighSchoolEventToVisible(report: VisibleScoutingReport, event: Hig
 
   return {
     ...report,
-    publicRank: Math.round(clamp(report.publicRank + rankPenalty, 1, 360)),
+    publicRank: Math.round(clamp(report.publicRank + rankPenalty, 1, 400)),
     confidence: clamp(report.confidence + confidenceShift, 0.12, 0.97),
     trend: rankPenalty >= 10 ? "falling" : report.trend,
     riskLevel: rankPenalty >= 28 && report.riskLevel !== "extreme" ? "high" : report.riskLevel,
@@ -1283,7 +1389,7 @@ function applyHighSchoolEpisodesToVisible(report: VisibleScoutingReport, episode
 
   return {
     ...report,
-    publicRank: Math.round(clamp(report.publicRank + rankMove, 1, 360)),
+    publicRank: Math.round(clamp(report.publicRank + rankMove, 1, 400)),
     confidence: clamp(report.confidence + confidenceShift, 0.12, 0.98),
     trend: rankMove <= -5 ? "rising" : rankMove >= 8 ? "falling" : report.trend,
     riskTags,
@@ -1572,7 +1678,7 @@ function createRetroHighSchoolSnapshot(prospect: Prospect, year: number, schoolY
   return {
     year,
     schoolYear,
-    publicRank: Math.round(clamp(prospect.visible.publicRank + rankPenalty, 1, 360)),
+    publicRank: Math.round(clamp(prospect.visible.publicRank + rankPenalty, 1, 400)),
     scoutGrade: retroScoutGrade(prospect.visible.scoutGrade, schoolYear),
     confidence: clamp(prospect.visible.confidence - confidencePenalty, 0.14, 0.78),
     heightCm: Math.max(155, prospect.physical.heightCm - heightPenalty),
@@ -1785,7 +1891,7 @@ function maybeApplyMlbDirectEvent(rng: Rng, prospect: Prospect, year: number): P
     : [...withAccolade.visible.riskTags, "signability" as ProspectRiskTag];
   const visible: VisibleScoutingReport = {
     ...withAccolade.visible,
-    publicRank: Math.round(clamp(withAccolade.visible.publicRank - (signed ? 0 : 10), 1, 360)),
+    publicRank: Math.round(clamp(withAccolade.visible.publicRank - (signed ? 0 : 10), 1, 400)),
     confidence: clamp(withAccolade.visible.confidence + (signed ? 0.02 : 0.04), 0.12, 0.98),
     riskTags,
     summary: signed
@@ -1840,7 +1946,7 @@ function maybeApplyReputationRiskEvent(rng: Rng, prospect: Prospect, year: numbe
     : [...prospect.visible.riskTags, "reputation-risk" as ProspectRiskTag];
   const visible: VisibleScoutingReport = {
     ...prospect.visible,
-    publicRank: Math.round(clamp(prospect.visible.publicRank + 8, 1, 360)),
+    publicRank: Math.round(clamp(prospect.visible.publicRank + 8, 1, 400)),
     confidence: clamp(prospect.visible.confidence - 0.025, 0.12, 0.98),
     riskTags,
     summary: `학교생활 관련 논란이 불거지며 여론 변수가 생겼다. 사실관계 확인과 구단 내부 기준 검토가 필요하다. ${prospect.visible.summary}`,
@@ -1879,7 +1985,7 @@ function applyAccoladesToProspect(prospect: Prospect, quotaAccolades: ProspectAc
   const visible: VisibleScoutingReport = {
     ...prospect.visible,
     confidence: clamp(prospect.visible.confidence + quotaAccolades.length * 0.025, 0.16, 0.98),
-    publicRank: Math.round(clamp(prospect.visible.publicRank - Math.min(28, Math.round(hypeBoost / 2.4)), 1, 360)),
+    publicRank: Math.round(clamp(prospect.visible.publicRank - Math.min(28, Math.round(hypeBoost / 2.4)), 1, 400)),
     summary: `${quotaAccolades.map((accolade) => accolade.label).join(", ")} 이력이 추가됐다. ${prospect.visible.summary}`,
     teamInterest: mergeTeamInterest(prospect.visible.teamInterest, quotaAccolades),
   };

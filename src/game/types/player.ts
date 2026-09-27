@@ -261,9 +261,12 @@ export type ProspectSourceType = "high-school" | "college" | "overseas-returnee"
 export type Prospect = {
   id: ProspectId;
   sourceType?: ProspectSourceType;
-  collegeYear?: 1 | 2 | 3 | 4;
+  collegeProgramType?: "two-year" | "four-year";
+  collegeYear?: 2 | 4;
+  collegeDraftRoute?: "regular" | "early-entry" | "junior-college" | "redraft";
   overseasPath?: "mlb-minor" | "npb-minor" | "independent" | "academy";
   overseasYears?: number;
+  overseasLifestyle?: "regular-starter" | "bench-depth" | "rehab-focused" | "travel-grind" | "training-only";
   returnReason?: "방출" | "부상" | "출전 기회 부족" | "병역/국내 복귀" | "계약 만료";
   draftEligibilityNote?: string;
   draftYear: number;

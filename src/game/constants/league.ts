@@ -4,7 +4,7 @@ import type { DraftTendency, PositionDepth, Team, TeamNeed, TeamWindow } from ".
 import type { Rng } from "../generation/random";
 
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
-  prospectsPerYear: 360,
+  prospectsPerYear: 400,
   teams: 10,
   rounds: 10,
   enablePickTrades: true,

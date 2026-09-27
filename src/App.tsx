@@ -211,7 +211,7 @@ function App() {
   const schoolProfiles = useMemo(() => (game ? Object.values(game.schoolsById) : []), [game]);
   const draftPicks = useMemo(() => (game ? game.draftPicksByYear[game.currentYear] : []), [game]);
   const displayDraftYear = draftPicks[0]?.year ?? game?.currentYear ?? 2026;
-  const totalProspects = game?.settings.prospectsPerYear ?? 360;
+  const totalProspects = game?.settings.prospectsPerYear ?? 400;
   const totalObservedProspects = prospects.length || totalProspects;
   const totalPicks = draftPicks.length || 100;
   const schools = useMemo(() => Array.from(new Set(prospects.map((prospect) => prospect.school))).sort(), [prospects]);
@@ -1244,7 +1244,7 @@ function App() {
     const rng = createSeededRng(seed);
     const baseGame = game ?? createNewGame(seed);
     const schools = Object.values(baseGame.schoolsById);
-    const { prospects: nextProspects, classQuality } = advanceHighSchoolPlayerPool(rng, draftYear, game?.settings.prospectsPerYear ?? 360, Object.values(baseGame.prospectsById), schools);
+    const { prospects: nextProspects, classQuality } = advanceHighSchoolPlayerPool(rng, draftYear, game?.settings.prospectsPerYear ?? 400, Object.values(baseGame.prospectsById), schools);
     const nextDraftProspects = nextProspects.filter((prospect) => isDraftEligibleProspect(prospect, draftYear));
     const nextGame: GameState = {
       ...baseGame,
@@ -4565,7 +4565,7 @@ function createScoutLegacySummary(
   ];
   const closingLine =
     bestPlayers.length > 0
-      ? `${bestPlayers[0].prospect.name}의 이름이 가장 굵게 남았지만, ${scoutName}의 진짜 유산은 매년 360명의 이름 속에서 다음 가능성을 포기하지 않은 시간입니다.`
+      ? `${bestPlayers[0].prospect.name}의 이름이 가장 굵게 남았지만, ${scoutName}의 진짜 유산은 매년 400명의 이름 속에서 다음 가능성을 포기하지 않은 시간입니다.`
       : `${scoutName}의 50년은 화려한 전설보다 오래 버틴 관찰의 기록에 가깝습니다. 다음 삶에서는 또 다른 첫 번째 픽이 기다립니다.`;
 
   return {
@@ -5811,8 +5811,8 @@ function sourceTypeLabel(prospect: Prospect): string {
 }
 
 function prospectPathLabel(prospect: Prospect): string {
-  if (prospect.sourceType === "college") return `대학 ${prospect.collegeYear ?? "-"}학년`;
-  if (prospect.sourceType === "overseas-returnee") return `${overseasPathLabel(prospect.overseasPath)} ${prospect.overseasYears ?? "-"}년`;
+  if (prospect.sourceType === "college") return `${collegeProgramTypeLabel(prospect.collegeProgramType)} ${prospect.collegeYear ?? "-"}학년 · ${collegeDraftRouteLabel(prospect.collegeDraftRoute)}`;
+  if (prospect.sourceType === "overseas-returnee") return `${overseasPathLabel(prospect.overseasPath)} ${prospect.overseasYears ?? "-"}년 · ${overseasLifestyleLabel(prospect.overseasLifestyle)}`;
   return `${prospect.schoolYear}학년`;
 }
 
@@ -5831,6 +5831,29 @@ function overseasPathLabel(path?: Prospect["overseasPath"]): string {
   if (path === "independent") return "해외 독립리그";
   if (path === "academy") return "해외 아카데미";
   return "해외 경력";
+}
+
+function collegeProgramTypeLabel(type?: Prospect["collegeProgramType"]): string {
+  if (type === "two-year") return "2년제";
+  if (type === "four-year") return "4년제";
+  return "대학";
+}
+
+function collegeDraftRouteLabel(route?: Prospect["collegeDraftRoute"]): string {
+  if (route === "early-entry") return "얼리";
+  if (route === "junior-college") return "전문대";
+  if (route === "redraft") return "재도전";
+  if (route === "regular") return "정규";
+  return "대학";
+}
+
+function overseasLifestyleLabel(lifestyle?: Prospect["overseasLifestyle"]): string {
+  if (lifestyle === "regular-starter") return "주전급 출전";
+  if (lifestyle === "bench-depth") return "벤치·대기";
+  if (lifestyle === "rehab-focused") return "재활 중심";
+  if (lifestyle === "travel-grind") return "이동 많은 생활";
+  if (lifestyle === "training-only") return "훈련 위주";
+  return "해외 생활";
 }
 
 function isDraftEligibleProspect(prospect: Prospect, year: number): boolean {
