@@ -256,8 +256,16 @@ export type HighSchoolYearSnapshot = {
   pitcherStats?: PitcherStats;
 };
 
+export type ProspectSourceType = "high-school" | "college" | "overseas-returnee";
+
 export type Prospect = {
   id: ProspectId;
+  sourceType?: ProspectSourceType;
+  collegeYear?: 1 | 2 | 3 | 4;
+  overseasPath?: "mlb-minor" | "npb-minor" | "independent" | "academy";
+  overseasYears?: number;
+  returnReason?: "방출" | "부상" | "출전 기회 부족" | "병역/국내 복귀" | "계약 만료";
+  draftEligibilityNote?: string;
   draftYear: number;
   highSchoolEntryYear: number;
   draftEligibleYear: number;

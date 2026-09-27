@@ -33,7 +33,7 @@ import { roundGrade, roundTo } from "./game/utils/math";
 import type { DraftPickId, Position, ProspectId, TeamId } from "./game/types/common";
 import type { DraftPick } from "./game/types/draft";
 import type { GameState } from "./game/types/game";
-import type { DevelopmentTools, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, PitcherDevelopmentTools, PitcherStats, Prospect, ProspectRiskTag, SchoolYear, ScoutGrade, SeasonFormCycle } from "./game/types/player";
+import type { DevelopmentTools, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, PitcherDevelopmentTools, PitcherStats, Prospect, ProspectRiskTag, ProspectSourceType, SchoolYear, ScoutGrade, SeasonFormCycle } from "./game/types/player";
 import type { SchoolDevelopmentBias, SchoolProfile, SchoolRegion, SchoolTier, SchoolTrait } from "./game/types/school";
 import type { PositionDepth, Team } from "./game/types/team";
 import type {
@@ -102,6 +102,13 @@ declare global {
     }) => Promise<SaveFileHandle>;
   }
 }
+
+const SOURCE_TYPE_LABELS: Record<ProspectSourceType | "all", string> = {
+  all: "전체",
+  "high-school": "고교",
+  college: "대학",
+  "overseas-returnee": "해외 복귀",
+};
 
 const STAT_CAREER_LOG_TYPES = new Set([
   "육성 결과",
@@ -221,6 +228,7 @@ function App() {
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
   const [roundFilter, setRoundFilter] = useState<number | "all">("all");
   const [schoolYearFilter, setSchoolYearFilter] = useState<SchoolYear | "all" | "eligible">("eligible");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<ProspectSourceType | "all">("all");
   const [playerTypeFilter, setPlayerTypeFilter] = useState<PlayerTypeFilter>("all");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [riskFilter, setRiskFilter] = useState<ProspectRiskTag | "all">("all");
@@ -271,7 +279,7 @@ function App() {
   const selectedTeam = teams.find((team) => team.id === userTeamId);
   const currentPick = phase === "draft" ? draftPicks[selections.length] : undefined;
   const currentTeam = currentPick ? teams.find((team) => team.id === currentPick.ownerTeamId) : undefined;
-  const draftEligibleProspects = useMemo(() => prospects.filter((prospect) => prospect.draftEligibleYear === displayDraftYear && prospect.schoolYear === 3 && !isMlbDirectSigned(prospect)), [displayDraftYear, prospects]);
+  const draftEligibleProspects = useMemo(() => prospects.filter((prospect) => isDraftEligibleProspect(prospect, displayDraftYear)), [displayDraftYear, prospects]);
   const selected = prospects.find((prospect) => prospect.id === selectedId) ?? draftEligibleProspects[0] ?? prospects[0];
   const prospectDetail = prospectDetailId ? prospects.find((prospect) => prospect.id === prospectDetailId) : undefined;
   const selectedDrafted = selected ? selections.some((selection) => selection.prospect.id === selected.id) : false;
@@ -288,8 +296,9 @@ function App() {
     return tableProspects
       .filter((prospect) => {
         if (positionFilter !== "all" && prospect.primaryPosition !== positionFilter) return false;
-        if (schoolYearFilter === "eligible" && (prospect.draftEligibleYear !== displayDraftYear || isMlbDirectSigned(prospect))) return false;
+        if (schoolYearFilter === "eligible" && !isDraftEligibleProspect(prospect, displayDraftYear)) return false;
         if (schoolYearFilter !== "all" && schoolYearFilter !== "eligible" && prospect.schoolYear !== schoolYearFilter) return false;
+        if (sourceTypeFilter !== "all" && prospectSourceType(prospect) !== sourceTypeFilter) return false;
         if (roundFilter !== "all" && !rangeContains(prospect.visible.projectedRound, roundFilter)) return false;
         if (playerTypeFilter === "hitters" && prospect.playerGroup === "pitcher") return false;
         if (playerTypeFilter === "pitchers" && prospect.playerGroup !== "pitcher") return false;
@@ -304,10 +313,10 @@ function App() {
         return true;
       })
       .sort((a, b) => compareBySortKey(a, b, sortKey, sortDirection));
-  }, [accoladeFilter, activePreset, displayDraftYear, favoriteOnly, favorites, leagueFilter, playerTypeFilter, positionFilter, regionFilter, riskFilter, roundFilter, schoolFilter, schoolTierFilter, schoolYearFilter, selectedTeam, sortDirection, sortKey, tableProspects]);
+  }, [accoladeFilter, activePreset, displayDraftYear, favoriteOnly, favorites, leagueFilter, playerTypeFilter, positionFilter, regionFilter, riskFilter, roundFilter, schoolFilter, schoolTierFilter, schoolYearFilter, selectedTeam, sortDirection, sortKey, sourceTypeFilter, tableProspects]);
 
   const userSelections = selections.filter((selection) => selection.team.id === userTeamId);
-  const canUserPick = Boolean(phase === "draft" && currentTeam?.id === userTeamId && selected && selected.draftEligibleYear === displayDraftYear && selected.schoolYear === 3 && !isMlbDirectSigned(selected) && !selectedDrafted);
+  const canUserPick = Boolean(phase === "draft" && currentTeam?.id === userTeamId && selected && isDraftEligibleProspect(selected, displayDraftYear) && !selectedDrafted);
   const fanMockCandidates = useMemo(() => (selectedTeam ? createFanMockDraft(selectedTeam, draftEligibleProspects) : []), [draftEligibleProspects, selectedTeam]);
   const fanPickReactions = useMemo(() => userSelections.map((selection) => createFanPickReaction(selection, selectedTeam, fanMockCandidates)), [fanMockCandidates, selectedTeam, userSelections]);
   const fieldPickReactions = useMemo(() => userSelections.map((selection) => createFieldPickReaction(selection, selectedTeam)), [selectedTeam, userSelections]);
@@ -316,7 +325,7 @@ function App() {
   const nextUserPick = nextUserPickIndex >= 0 ? draftPicks[nextUserPickIndex] : undefined;
   const bigBoardProspects = bigBoardIds.map((id) => prospects.find((prospect) => prospect.id === id)).filter((prospect): prospect is Prospect => Boolean(prospect));
   const bigBoardAvailable = bigBoardProspects.filter((prospect) => !draftedIds.has(prospect.id));
-  const bigBoardDraftAvailable = bigBoardAvailable.filter((prospect) => prospect.draftEligibleYear === displayDraftYear && prospect.schoolYear === 3);
+  const bigBoardDraftAvailable = bigBoardAvailable.filter((prospect) => isDraftEligibleProspect(prospect, displayDraftYear));
   const bigBoardTopDraftRecommendation = bigBoardDraftAvailable[0];
   const favoriteProspects = Array.from(favorites)
     .map((id) => prospects.find((prospect) => prospect.id === id))
@@ -727,7 +736,7 @@ function App() {
 
   function runPreDraftAction(action: PreDraftAction) {
     if (phase !== "pre-draft" || predraftUserAction) return;
-    const target = selected?.draftEligibleYear === displayDraftYear && selected.schoolYear === 3 ? selected : draftEligibleProspects[0];
+    const target = selected && isDraftEligibleProspect(selected, displayDraftYear) ? selected : draftEligibleProspects[0];
     const topNeed = topNeeds[0]?.position;
     const userTeamName = selectedTeam?.shortName ?? "우리 팀";
     let event: DraftIntelEvent;
@@ -804,7 +813,7 @@ function App() {
 
   function runAutoPreDraftAction() {
     if (phase !== "pre-draft" || predraftUserAction) return;
-    const target = selected?.draftEligibleYear === displayDraftYear && selected.schoolYear === 3 ? selected : draftEligibleProspects[0];
+    const target = selected && isDraftEligibleProspect(selected, displayDraftYear) ? selected : draftEligibleProspects[0];
     const topNeed = topNeeds[0]?.position;
     const topNeedTarget = target && topNeed ? target.primaryPosition === topNeed || target.secondaryPositions.includes(topNeed) : false;
     const action: PreDraftAction =
@@ -955,7 +964,7 @@ function App() {
     if (!prospect) return;
     if (draftedIds.has(prospect.id)) return;
     if (isMlbDirectSigned(prospect)) return;
-    if (prospect.draftEligibleYear !== displayDraftYear || prospect.schoolYear !== 3) return;
+    if (!isDraftEligibleProspect(prospect, displayDraftYear)) return;
     applySelection(prospect, currentPick, currentTeam);
     window.setTimeout(() => {
       void runSequentialCpuPicksUntilUserPick();
@@ -1182,7 +1191,7 @@ function App() {
     const baseGame = game ?? createNewGame(seed);
     const schools = Object.values(baseGame.schoolsById);
     const { prospects: nextProspects, classQuality } = advanceHighSchoolPlayerPool(rng, draftYear, game?.settings.prospectsPerYear ?? 360, Object.values(baseGame.prospectsById), schools);
-    const nextDraftProspects = nextProspects.filter((prospect) => prospect.draftEligibleYear === draftYear && prospect.schoolYear === 3 && !isMlbDirectSigned(prospect));
+    const nextDraftProspects = nextProspects.filter((prospect) => isDraftEligibleProspect(prospect, draftYear));
     const nextGame: GameState = {
       ...baseGame,
       turn: baseGame.turn + 1,
@@ -3027,12 +3036,13 @@ function App() {
               <div className="filter-head">
                 <div>
                   <h2>선수 탐색 조건</h2>
-                  <p>드래프트 룸에서는 기본적으로 올해 지명 대상 3학년 후보를 빠르게 좁혀 봅니다.</p>
+                  <p>드래프트 룸에서는 기본적으로 올해 지명 대상 후보를 빠르게 좁혀 봅니다.</p>
                 </div>
                 <span>{visibleProspects.length}명 표시</span>
               </div>
               <Select label="포지션" value={positionFilter} onChange={(value) => setPositionFilter(value as Position | "all")} options={["all", ...POSITIONS]} labelMap={POSITION_LABELS} />
               <Select label="큰 분류" value={playerTypeFilter} onChange={(value) => setPlayerTypeFilter(value as PlayerTypeFilter)} options={["all", "pitchers", "hitters"]} labelMap={PLAYER_TYPE_LABELS} />
+              <Select label="출신 구분" value={sourceTypeFilter} onChange={(value) => setSourceTypeFilter(value as ProspectSourceType | "all")} options={["all", "high-school", "college", "overseas-returnee"]} labelMap={SOURCE_TYPE_LABELS} />
               <Select label="학년" value={String(schoolYearFilter)} onChange={(value) => setSchoolYearFilter(value === "all" || value === "eligible" ? value : Number(value) as SchoolYear)} options={["eligible", "all", "3", "2", "1"]} labelMap={{ eligible: "올해 지명 대상", "3": "3학년", "2": "2학년", "1": "1학년" }} />
               <Select label="예상 라운드" value={String(roundFilter)} onChange={(value) => setRoundFilter(value === "all" ? "all" : Number(value))} options={["all", ...ROUNDS.map(String)]} labelMap={ROUND_LABELS} />
               <Select label="리스크 태그" value={riskFilter} onChange={(value) => setRiskFilter(value as ProspectRiskTag | "all")} options={["all", ...RISK_TAGS]} labelMap={RISK_LABELS} />
@@ -3079,7 +3089,8 @@ function App() {
                 <th>보드</th>
                 <SortableTh label="순위" column="rank" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
                 <th>이름</th>
-                <th>학년</th>
+                <th>출신</th>
+                <th>학년/경력</th>
                 <th>예정연도</th>
                 <SortableTh label="포지션" column="position" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
                 <th>유형</th>
@@ -3126,7 +3137,8 @@ function App() {
                     {prospect.name}
                     {selection && <span className="drafted-inline-badge">{selection.pick.round}R {selection.team.shortName}</span>}
                   </td>
-                  <td className="num">{prospect.schoolYear}</td>
+                  <td>{sourceTypeLabel(prospect)}</td>
+                  <td>{prospectPathLabel(prospect)}</td>
                   <td className="num">{prospect.draftEligibleYear}</td>
                   <td><span className={`pos pos-${prospect.primaryPosition}`}>{positionLabel(prospect.primaryPosition)}</span></td>
                   <td>{prospect.archetype}</td>
@@ -3185,7 +3197,7 @@ function App() {
           {prospectDetail && (
             <ProspectDetailModal
               prospect={prospectDetail}
-              canDraft={phase === "draft" && !isPickSequenceRunning && currentTeam?.id === userTeamId && prospectDetail.draftEligibleYear === displayDraftYear && prospectDetail.schoolYear === 3 && !isMlbDirectSigned(prospectDetail) && !draftedIds.has(prospectDetail.id)}
+              canDraft={phase === "draft" && !isPickSequenceRunning && currentTeam?.id === userTeamId && isDraftEligibleProspect(prospectDetail, displayDraftYear) && !draftedIds.has(prospectDetail.id)}
               phase={phase}
               onDraft={() => userPick(prospectDetail)}
               onClose={() => setProspectDetailId("")}
@@ -3217,7 +3229,7 @@ function App() {
 
 function createPreDraftIntelEvents(year: number, teams: Team[], prospects: Prospect[], userTeamId?: TeamId): DraftIntelEvent[] {
   const eligible = prospects
-    .filter((prospect) => prospect.draftEligibleYear === year && prospect.schoolYear === 3 && !isMlbDirectSigned(prospect))
+    .filter((prospect) => isDraftEligibleProspect(prospect, year))
     .sort((left, right) => left.visible.publicRank - right.visible.publicRank);
   const top = eligible.slice(0, 32);
   const userTeam = teams.find((team) => team.id === userTeamId) ?? teams[stableIndex(`${year}-user-team`, teams.length)];
@@ -4002,7 +4014,7 @@ function ProspectDetailModal({
         <div className="panel-head">
           <div>
             <h2 id="prospect-detail-title">{prospect.name}</h2>
-            <p>{positionLabel(prospect.primaryPosition)} · {prospect.school} · {prospect.schoolYear}학년 · {prospect.physical.heightCm}cm/{prospect.physical.weightKg}kg</p>
+            <p>{positionLabel(prospect.primaryPosition)} · {prospect.school} · {prospectDraftPathSummary(prospect)} · {prospect.physical.heightCm}cm/{prospect.physical.weightKg}kg</p>
           </div>
           <button className="text-button" onClick={onClose}>닫기</button>
         </div>
@@ -4012,6 +4024,7 @@ function ProspectDetailModal({
           <span>{prospect.schoolRegion}</span>
           <span>{schoolTierLabel(prospect.schoolTier)}</span>
           <span>{prospect.leagueLevel}</span>
+          <span>{sourceTypeLabel(prospect)}</span>
           <span>{prospect.draftEligibleYear}년 드래프트 예정</span>
           {prospect.mlbDirectStatus && <span>{mlbDirectLabel(prospect)}</span>}
         </div>
@@ -4030,7 +4043,8 @@ function ProspectDetailModal({
               <h3>핵심 지표</h3>
               <dl className="metric-grid">
                 <Metric label="예상 라운드" value={formatRange(prospect.visible.projectedRound)} />
-                <Metric label="학년" value={`${prospect.schoolYear}학년`} />
+                <Metric label="출신 구분" value={sourceTypeLabel(prospect)} />
+                <Metric label="학년/경력" value={prospectPathLabel(prospect)} />
                 <Metric label="드래프트 예정연도" value={prospect.draftEligibleYear} />
                 <Metric label="스카우트 등급" value={gradeLabel(prospect.visible.scoutGrade)} />
                 <Metric label="평판" value={prospect.reputation} />
@@ -4043,6 +4057,7 @@ function ProspectDetailModal({
             <section className="detail-block">
               <h3>학교 정보</h3>
               <p>{schoolProfileText(prospect)}</p>
+              {prospect.sourceType !== "high-school" && <p>{prospectDraftPathSummary(prospect)}</p>}
               <p>특성: {prospect.schoolTraits.map(schoolTraitLabel).join(", ") || "-"}</p>
               <dl className="metric-grid compact-metrics">
                 <Metric label="리그 수준" value={prospect.leagueLevel} />
@@ -4584,6 +4599,8 @@ function comparisonRows(mode: "hitter" | "pitcher" | "mixed") {
     { label: "예상 라운드", value: (p: Prospect) => formatRange(p.visible.projectedRound) },
     { label: "스카우트 등급", value: (p: Prospect) => gradeLabel(p.visible.scoutGrade) },
     { label: "선수 유형", value: (p: Prospect) => p.archetype },
+    { label: "출신 구분", value: (p: Prospect) => sourceTypeLabel(p) },
+    { label: "학년/경력", value: (p: Prospect) => prospectPathLabel(p) },
     { label: "신체조건", value: (p: Prospect) => `${p.physical.heightCm}cm/${p.physical.weightKg}kg` },
     { label: "학교", value: (p: Prospect) => p.school },
     { label: "지역", value: (p: Prospect) => p.schoolRegion },
@@ -5723,6 +5740,41 @@ function needLevelLabel(value: number): string {
 
 function positionLabel(position: Position): string {
   return POSITION_LABELS[position];
+}
+
+function prospectSourceType(prospect: Prospect): ProspectSourceType {
+  return prospect.sourceType ?? "high-school";
+}
+
+function sourceTypeLabel(prospect: Prospect): string {
+  return SOURCE_TYPE_LABELS[prospectSourceType(prospect)];
+}
+
+function prospectPathLabel(prospect: Prospect): string {
+  if (prospect.sourceType === "college") return `대학 ${prospect.collegeYear ?? "-"}학년`;
+  if (prospect.sourceType === "overseas-returnee") return `${overseasPathLabel(prospect.overseasPath)} ${prospect.overseasYears ?? "-"}년`;
+  return `${prospect.schoolYear}학년`;
+}
+
+function prospectDraftPathSummary(prospect: Prospect): string {
+  if (prospect.sourceType === "college") return prospect.draftEligibilityNote ?? `대학 ${prospect.collegeYear ?? "-"}학년 지명 대상`;
+  if (prospect.sourceType === "overseas-returnee") {
+    const reason = prospect.returnReason ? ` · 복귀 사유: ${prospect.returnReason}` : "";
+    return `${prospect.draftEligibilityNote ?? "해외 경력 후 국내 복귀"}${reason}`;
+  }
+  return `${prospect.schoolYear}학년 · ${prospect.draftEligibleYear}년 드래프트 예정`;
+}
+
+function overseasPathLabel(path?: Prospect["overseasPath"]): string {
+  if (path === "mlb-minor") return "MLB 마이너";
+  if (path === "npb-minor") return "NPB 육성/2군";
+  if (path === "independent") return "해외 독립리그";
+  if (path === "academy") return "해외 아카데미";
+  return "해외 경력";
+}
+
+function isDraftEligibleProspect(prospect: Prospect, year: number): boolean {
+  return prospect.draftEligibleYear === year && prospect.schoolYear === 3 && !isMlbDirectSigned(prospect);
 }
 
 function gradeLabel(grade: ScoutGrade): string {
