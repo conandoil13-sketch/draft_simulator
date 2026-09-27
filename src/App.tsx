@@ -5881,11 +5881,12 @@ function schoolTraitLabel(trait: SchoolTrait): string {
 }
 
 function schoolProfileText(prospect: Prospect): string {
+  const reportReliability = formatPercent(prospect.schoolReportReliabilityBase);
   if (prospect.sourceType === "overseas-returnee") {
-    return `${prospect.school}는 원 소속 고교입니다. 해외 경력은 ${prospectDraftPathSummary(prospect)}로 별도 평가해야 합니다. 고교 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${prospect.schoolReportReliabilityBase}%입니다.`;
+    return `${prospect.school}는 원 소속 고교입니다. 해외 경력은 ${prospectDraftPathSummary(prospect)}로 별도 평가해야 합니다. 고교 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${reportReliability}입니다.`;
   }
   const traits = prospect.schoolTraits.map(schoolTraitLabel).join(", ");
-  return `${prospect.school}는 ${prospect.schoolRegion} ${schoolTierLabel(prospect.schoolTier)} 학교입니다. 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${prospect.schoolReportReliabilityBase}%이며 ${SCHOOL_BIAS_LABELS[prospect.schoolDevelopmentBias]} 성향이 선수 생성과 평가 표본에 반영됩니다.${traits ? ` 주요 특성: ${traits}.` : ""}`;
+  return `${prospect.school}는 ${prospect.schoolRegion} ${schoolTierLabel(prospect.schoolTier)} 학교입니다. 리그 강도 ${prospect.schoolLeagueStrength}, 기본 리포트 신뢰도 ${reportReliability}이며 ${SCHOOL_BIAS_LABELS[prospect.schoolDevelopmentBias]} 성향이 선수 생성과 평가 표본에 반영됩니다.${traits ? ` 주요 특성: ${traits}.` : ""}`;
 }
 
 function throwsBatsText(prospect: Prospect): string {
