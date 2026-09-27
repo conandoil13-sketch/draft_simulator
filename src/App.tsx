@@ -1268,6 +1268,7 @@ function App() {
     const nextPlayers = applyDefaultTrackingAfterSeason(rosterLimitedPlayers, userTeamId, nextYear);
     const previousResults = seasonResults.filter((result) => result.yearIndex === careerYear);
     const nextSeasonResults = simulateTeamSeason(teams, selectionSource, nextPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments);
+    applyOverseasShowcaseEvents(nextPlayers, nextSeasonResults, seasonResults, seasonYear, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     const nextYearPicks = createNextDraftPicksFromSeason(nextSeasonResults, seasonYear + 1, game?.settings.rounds ?? 10);
     const tradeResult = applyPickTradeEvents(nextYearPicks, teams, userTeamId, seasonYear, nextYear);
     const needsUpdate = updateTeamNeedsAfterSeason(teams, nextPlayers, seasonYear);
@@ -4421,7 +4422,7 @@ function createPlayerAchievementSummary(player: CareerPlayerState, awards: Yearl
     .sort((left, right) => left.year - right.year || left.record.localeCompare(right.record, "ko"))
     .map((row) => `${row.year}년차 · ${row.record}`);
   const newsLines = orderedNews(news)
-    .filter((item) => ["신인왕 수상", "골든글러브", "MVP급 시즌", "메이저 진출", "하위 라운드 성공", "우리 팀이 거른 선수의 성공"].includes(item.type))
+    .filter((item) => ["신인왕 수상", "골든글러브", "MVP급 시즌", "메이저 진출", "해외 평가전 활약", "해외 관심", "하위 라운드 성공", "우리 팀이 거른 선수의 성공"].includes(item.type))
     .map((item) => `${item.year}년차 ${formatSeasonWeek(item.week)} · ${item.headline}`);
   const topLine =
     mvpRows.length > 0
@@ -5012,10 +5013,126 @@ function freeAgencyExitChance(player: CareerPlayerState): number {
 
 function majorPostingChance(player: CareerPlayerState): number {
   const yearFactor = recordYearFactor(player.yearsSinceDraft, 8, 4);
-  if (player.currentOverall >= 94 && (player.eventKeys.includes("mvp") || player.eventKeys.includes("major-posting"))) return 0.014 * yearFactor;
-  if (player.currentOverall >= 91 && player.eventKeys.some((key) => ["mvp", "gold-glove"].includes(key))) return 0.007 * yearFactor;
-  if (player.currentOverall >= 88 && player.eventKeys.includes("mvp")) return 0.003 * yearFactor;
+  const overseasBoost = player.eventKeys.includes("overseas-showcase-standout")
+    ? 1.65
+    : player.eventKeys.includes("overseas-scouted")
+      ? 1.28
+      : 1;
+  if (player.currentOverall >= 94 && (player.eventKeys.includes("mvp") || player.eventKeys.includes("major-posting"))) return 0.014 * yearFactor * overseasBoost;
+  if (player.currentOverall >= 91 && player.eventKeys.some((key) => ["mvp", "gold-glove"].includes(key))) return 0.007 * yearFactor * overseasBoost;
+  if (player.currentOverall >= 88 && player.eventKeys.includes("mvp")) return 0.003 * yearFactor * overseasBoost;
   return 0;
+}
+
+function applyOverseasShowcaseEvents(
+  players: CareerPlayerState[],
+  currentResults: TeamSeasonResult[],
+  previousResults: TeamSeasonResult[],
+  seasonYear: number,
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+): void {
+  const userResult = currentResults.find((result) => result.teamId === userTeamId);
+  if (!userResult) return;
+  const recentResults = [...previousResults.filter((result) => result.teamId === userTeamId), userResult]
+    .sort((left, right) => right.yearIndex - left.yearIndex)
+    .slice(0, 5);
+  const topTwoSeasons = recentResults.filter((result) => result.rank <= 2).length;
+  const playoffSeasons = recentResults.filter((result) => result.rank <= 5).length;
+  const dynastyScore = topTwoSeasons * 18 + playoffSeasons * 5 + Math.max(0, 11 - userResult.rank) * 3 + Math.max(0, userResult.wins - 80) * 0.8;
+  const activeStars = players.filter((player) =>
+    player.team.id === userTeamId &&
+    player.status !== "방출" &&
+    player.status !== "은퇴" &&
+    player.status !== "해외진출" &&
+    player.militaryStatus !== "serving" &&
+    (player.currentOverall >= 72 || player.eventKeys.some((key) => ["mvp", "gold-glove", "rookie-award", "allstar", "national-team"].includes(key))),
+  );
+  const starScore = activeStars.reduce((total, player) => total + Math.max(0, player.currentOverall - 68) * 0.45 + overseasResumeBonus(player), 0);
+  const popularityProxy = clampNumber(38 + dynastyScore * 0.55 + starScore * 0.8, 0, 100);
+  if (recentResults.length < 3 || topTwoSeasons < 2 || popularityProxy < 68) return;
+
+  const invitationChance = clampNumber(0.08 + (topTwoSeasons - 1) * 0.055 + Math.max(0, popularityProxy - 72) * 0.004, 0.08, 0.38);
+  if (Math.random() > invitationChance) return;
+
+  const showcase = chooseOverseasShowcase(seasonYear, popularityProxy, userResult.rank);
+  const candidates = activeStars
+    .filter((player) => player.currentOverall >= 67 && !player.eventKeys.includes(`overseas-showcase-${seasonYear}`))
+    .map((player) => ({
+      player,
+      score: player.currentOverall + overseasResumeBonus(player) + deterministicNoise(`showcase-${seasonYear}-${player.playerId}`) * 12,
+    }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 8);
+  if (candidates.length === 0) return;
+
+  const teamName = candidates[0]?.player.team.name ?? "우리 팀";
+  const resultText = overseasShowcaseResult(showcase, userResult, seasonYear);
+  news.push({
+    id: `overseas-showcase-team-${seasonYear}-${userTeamId}`,
+    year,
+    week: 28,
+    grade: "headline",
+    importance: 5,
+    type: "해외 평가전",
+    headline: `${teamName}, ${showcase.label} 제안 수락`,
+    body: `${seasonYear}시즌 종료 후 ${showcase.partner} 측이 왕조급 성적과 흥행력을 확인하고 이벤트 매치를 제안했다. ${resultText} 좋은 장면을 만든 선수들은 해외 스카우트 체크리스트에 이름을 올렸다.`,
+    teamName,
+    emphasis: "user",
+  });
+
+  const standoutCount = Math.min(candidates.length, 1 + Math.floor(deterministicNoise(`showcase-count-${seasonYear}-${userTeamId}`) * 3));
+  candidates.slice(0, standoutCount).forEach(({ player }, index) => {
+    const standout = index === 0 || deterministicNoise(`showcase-standout-${seasonYear}-${player.playerId}`) > 0.42;
+    player.eventKeys = uniqueStrings([
+      ...player.eventKeys,
+      `overseas-showcase-${seasonYear}`,
+      "overseas-scouted",
+      ...(standout ? ["overseas-showcase-standout"] : []),
+    ]);
+    player.transactionLog = uniqueStrings([
+      ...player.transactionLog,
+      `${seasonYear}년 ${showcase.label} ${standout ? "주요 활약" : "해외 스카우트 체크"}`,
+    ]);
+    addCareerNews(
+      news,
+      player,
+      year,
+      standout ? 5 : 4,
+      standout ? "해외 평가전 활약" : "해외 관심",
+      standout ? `${player.prospect.name}, ${showcase.label}에서 해외 관심 상승` : `${player.prospect.name}, 해외 스카우트 관찰 대상`,
+      standout
+        ? `${showcase.partner} 관계자 앞에서 자신의 강점을 확실히 보여줬다. 실제 이적과는 별개지만 해외진출 가능성 평가가 한 단계 올라갔다.`
+        : `${showcase.partner} 스카우트가 장기 관찰 대상으로 분류했다. 당장 이적을 의미하지는 않지만 향후 포스팅 변수로 남았다.`,
+      careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds),
+    );
+  });
+}
+
+function overseasResumeBonus(player: CareerPlayerState): number {
+  return (
+    (player.eventKeys.includes("mvp") ? 10 : 0) +
+    (player.eventKeys.includes("gold-glove") ? 6 : 0) +
+    (player.eventKeys.includes("rookie-award") ? 3 : 0) +
+    player.careerLog.filter((entry) => ["올스타 선발", "국가대표 선발", "MVP급 시즌", "골든글러브"].includes(entry.type)).length * 1.8
+  );
+}
+
+function chooseOverseasShowcase(seasonYear: number, popularity: number, rank: number): { label: string; partner: string } {
+  const roll = deterministicNoise(`overseas-showcase-type-${seasonYear}-${Math.round(popularity)}-${rank}`);
+  if (popularity >= 84 && rank <= 2 && roll > 0.56) return { label: "MLB 초청 평가전", partner: "MLB 구단" };
+  if (roll > 0.28) return { label: "NPB 교류전", partner: "NPB 구단" };
+  return { label: "아시아 챔피언십 친선전", partner: "해외 스카우트 그룹" };
+}
+
+function overseasShowcaseResult(showcase: { label: string }, result: TeamSeasonResult, seasonYear: number): string {
+  const roll = deterministicNoise(`overseas-showcase-result-${showcase.label}-${seasonYear}-${result.teamId}`);
+  if (roll > 0.78 || result.rank === 1) return `${showcase.label}에서 경쟁력 있는 경기력으로 시리즈를 가져갔다.`;
+  if (roll > 0.36) return `${showcase.label}에서는 승패보다 선수 개별 툴 검증에 가까운 흐름이 나왔다.`;
+  return `${showcase.label}에서 낯선 구위와 운영 방식에 고전했지만 몇몇 선수는 존재감을 남겼다.`;
 }
 
 function awardSingleRookieOfYear(
@@ -9399,7 +9516,7 @@ function addCareerNews(
   };
   player.careerLog = [...player.careerLog, logEntry].slice(-30);
   const trackingStatus = player.trackingStatus;
-  const majorType = ["1군 데뷔", "장기 재활", "방출", "은퇴", "신인왕 후보", "신인왕 수상", "골든글러브", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "트레이드", "FA 이적", "메이저 진출", "올스타 선발", "국가대표 선발", "병역 후 파워 상승", "차세대 전력", "베테랑 반등", "기량 저하"].includes(type);
+  const majorType = ["1군 데뷔", "장기 재활", "방출", "은퇴", "신인왕 후보", "신인왕 수상", "골든글러브", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "트레이드", "FA 이적", "메이저 진출", "해외 평가전 활약", "해외 관심", "올스타 선발", "국가대표 선발", "병역 후 파워 상승", "차세대 전력", "베테랑 반등", "기량 저하"].includes(type);
   if (trackingStatus === "summary" && !majorType && importance < 4) return;
   if (trackingStatus === "archived") {
     if (importance < 5 || !["1군 데뷔", "하위 라운드 성공", "MVP급 시즌", "트레이드", "우리 팀이 거른 선수의 성공"].includes(type)) return;
@@ -9462,8 +9579,8 @@ function newsPriority(news: CareerNewsItem): number {
 }
 
 function newsGradeForEvent(type: string, importance: CareerNewsItem["importance"], player: CareerPlayerState): NewsGrade {
-  if (["신인왕 수상", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "메이저 진출", "FA 영입", "트레이드 영입", "국가대표 선발"].includes(type)) return "headline";
-  if (["1군 데뷔", "장기 재활", "방출", "은퇴", "골든글러브", "신인왕 후보", "주요 신인 주목", "차세대 전력", "트레이드", "FA 이적", "올스타 선발", "병역 후 파워 상승", "베테랑 반등", "기량 저하"].includes(type)) return "major";
+  if (["신인왕 수상", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "메이저 진출", "해외 평가전 활약", "FA 영입", "트레이드 영입", "국가대표 선발"].includes(type)) return "headline";
+  if (["1군 데뷔", "장기 재활", "방출", "은퇴", "골든글러브", "신인왕 후보", "주요 신인 주목", "차세대 전력", "트레이드", "FA 이적", "해외 관심", "올스타 선발", "병역 후 파워 상승", "베테랑 반등", "기량 저하"].includes(type)) return "major";
   if (player.trackingStatus === "archived" || importance <= 2) return "archive";
   if (player.trackingStatus === "summary" && importance <= 3) return "archive";
   return "normal";
@@ -9486,6 +9603,9 @@ function newsSentiment(news: CareerNewsItem): "positive" | "neutral" | "negative
     "FA 영입",
     "트레이드 영입",
     "메이저 진출",
+    "해외 평가전",
+    "해외 평가전 활약",
+    "해외 관심",
     "차세대 전력",
     "베테랑 반등",
     "올스타 선발",
@@ -9565,6 +9685,7 @@ function seasonWeekForEvent(type: string, year: number, key: string): number {
   if (type === "올스타 선발") return 15 + jitter;
   if (type === "국가대표 선발") return 23 + jitter;
   if (type === "병역" || type === "상무 복무" || type === "병역 복귀" || type === "병역 후 파워 상승") return 25 + jitter;
+  if (type === "해외 평가전" || type === "해외 평가전 활약" || type === "해외 관심") return 28 + jitter;
   if (type === "신인왕 수상" || type === "골든글러브" || type === "MVP급 시즌" || type === "방출" || type === "은퇴" || type === "메이저 진출") return 27 + jitter;
   if (type.includes("대학") || type.includes("독립리그") || type.includes("육성선수")) return 24 + jitter;
   return 12 + Math.floor(deterministicNoise(seed) * 14);
