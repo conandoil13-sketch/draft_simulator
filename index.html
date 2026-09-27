@@ -4,9 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>고교야구 드래프트 시뮬레이터</title>
+    <style>
+      .boot-fallback {
+        max-width: 720px;
+        margin: 80px auto;
+        padding: 24px;
+        border: 1px solid #c9d1d9;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #1f2933;
+        line-height: 1.55;
+      }
+
+      .boot-fallback h1 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+
+      .boot-fallback code {
+        padding: 2px 5px;
+        border: 1px solid #d5dbe3;
+        background: #f4f6f8;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-fallback">
+        <h1>배포 설정 확인이 필요합니다</h1>
+        <p>
+          이 화면이 보이면 GitHub Pages가 Vite 빌드 결과가 아니라 저장소 루트의 개발용
+          <code>index.html</code>을 직접 서빙하고 있는 상태입니다.
+        </p>
+        <p>
+          GitHub 저장소의 <strong>Settings → Pages → Build and deployment</strong>에서
+          <strong>Source</strong>를 <strong>GitHub Actions</strong>로 바꾸면
+          <code>dist</code> 빌드 결과가 배포되어 게임이 정상 실행됩니다.
+        </p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
