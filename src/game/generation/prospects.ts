@@ -77,6 +77,7 @@ const ACCOLADES: ProspectAccolade[] = [
   { id: "emart-batting", label: "이마트배 타격상", category: "hitting", meaning: "타율과 출루 과정의 신뢰도를 올려주는 신호다.", reputationBoost: 11, hypeBoost: 10 },
   { id: "u18-national", label: "U-18 국가대표", category: "reputation", meaning: "또래 상위권 검증 이력으로 프로 적응 기대치와 구단 관심이 오른다.", reputationBoost: 16, hypeBoost: 15 },
   { id: "college-hs-allstar", label: "대학·고교 올스타전 출전", category: "reputation", meaning: "스카우트 노출이 많아진 선수로 관심 구단이 늘기 쉽다.", reputationBoost: 9, hypeBoost: 9 },
+  { id: "college-allstar", label: "대학 올스타 출전", category: "reputation", meaning: "대학·고교 올스타전에서 대학 올스타로 출전한 이력이다. 수상 타이틀보다는 대학 표본과 현장 노출이 늘어난 신호에 가깝다.", reputationBoost: 7, hypeBoost: 6 },
   { id: "lee-youngmin", label: "이영민 타격상", category: "hitting", meaning: "컨택 능력과 타격 정확도에 강한 공개 신호를 준다.", reputationBoost: 15, hypeBoost: 13 },
   { id: "choi-dongwon", label: "고교 최동원상", category: "pitching", meaning: "투수 완성도와 에이스 실적을 올려보지만 혹사와 부상 리스크도 같이 살펴야 한다.", reputationBoost: 16, hypeBoost: 16 },
   { id: "final-starter", label: "전국대회 결승 선발", category: "tournament", meaning: "큰 경기 경험이 평가에 반영되지만 표본이 짧으면 과대평가 위험이 있다.", reputationBoost: 10, hypeBoost: 12 },
@@ -387,13 +388,15 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
   const highSchoolFirstYear = year - collegeYear - 2;
   const highSchoolSnapshots = rebaseHighSchoolSnapshots(prospect.highSchoolSnapshots, highSchoolFirstYear);
   const highSchoolLogs = rebaseHighSchoolLogs(prospect.highSchoolCareerLog, highSchoolFirstYear);
+  const collegeAccolades = createCollegeExposureAccolades(rng, prospect, collegeDraftRoute);
+  const collegeAccoladeText = collegeAccolades.length > 0 ? `${collegeAccolades.map((accolade) => accolade.label).join(", ")} 이력이 붙었다. ` : "";
   const visible = {
     ...prospect.visible,
     confidence: clamp(prospect.visible.confidence + randomFloat(rng, collegeDraftRoute === "early-entry" ? 0.04 : 0.08, collegeDraftRoute === "redraft" ? 0.16 : 0.22), 0.32, 0.94),
     riskTags: collegeRiskTags(prospect, collegeDraftRoute),
-    strengths: uniqueStringsLocal([routeLabel, "대학리그 표본", ...prospect.visible.strengths]).slice(0, 4),
+    strengths: uniqueStringsLocal([routeLabel, ...collegeAccolades.map((accolade) => accolade.label), "대학리그 표본", ...prospect.visible.strengths]).slice(0, 4),
     weaknesses: uniqueStringsLocal([...prospect.visible.weaknesses, collegeDraftRoute === "early-entry" ? "얼리드래프트 검증 표본" : polishedTalent.potential <= 66 ? "성장 여지 제한" : "나이 대비 고점 검증 필요"]).slice(0, 4),
-    summary: `${program.type === "two-year" ? "2년제 전문대" : "4년제 대학"} ${collegeYear}학년 후보. ${routeNote} 고교 시절 기록과 대학 표본을 함께 봐야 하는 선수다. 성장 곡선은 고교생보다 짧지만 역할 검증은 더 많다. ${prospect.visible.summary}`,
+    summary: `${program.type === "two-year" ? "2년제 전문대" : "4년제 대학"} ${collegeYear}학년 후보. ${routeNote} ${collegeAccoladeText}고교 시절 기록과 대학 표본을 함께 봐야 하는 선수다. 대학 이력은 수상 타이틀보다 출전 표본과 노출 정도로 해석한다. ${prospect.visible.summary}`,
     oneLine: `${program.name} ${routeLabel} ${POSITION_NAMES[prospect.primaryPosition]} 후보. 즉전성은 확인됐지만 장기 고점은 별도 판단이 필요하다.`,
     growthProjection: `입단 직후 퓨처스 적응 기간은 짧을 수 있다. 다만 ${collegeDraftRoute === "early-entry" ? "어린 나이에 대학 실적을 앞세워 나온 케이스라 프로 적응 속도" : "고교 선수보다 나이가 많아 잠재력보다 역할 적합도"}를 우선 확인해야 한다.`,
   };
@@ -415,8 +418,9 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
     archetype: collegeArchetype(prospect, collegeDraftRoute),
     leagueLevel: prospect.leagueLevel === "정보 부족" ? "보통" : prospect.leagueLevel,
     collegeCommitRisk: 0,
-    reputation: Math.round(clamp(prospect.reputation + randomFloat(rng, 3, 13), 0, 100)),
-    draftHype: Math.round(clamp(prospect.draftHype + randomFloat(rng, -4, 10), 0, 100)),
+    accolades: uniqueAccolades([...prospect.accolades, ...collegeAccolades]),
+    reputation: Math.round(clamp(prospect.reputation + randomFloat(rng, 3, 13) + collegeAccolades.reduce((total, accolade) => total + accolade.reputationBoost, 0), 0, 100)),
+    draftHype: Math.round(clamp(prospect.draftHype + randomFloat(rng, -4, 10) + collegeAccolades.reduce((total, accolade) => total + accolade.hypeBoost, 0), 0, 100)),
     trueTalent: polishedTalent,
     visible,
     highSchoolSnapshots,
@@ -431,6 +435,15 @@ function createCollegeProspect(rng: Rng, year: number, prospect: Prospect): Pros
         body: `${program.name}에서 ${routeNote} 고교 시절 기존 리포트와 대학 성적을 함께 대조해야 한다. 고점보다 즉전성과 포지션 적합도가 평가의 중심이다.`,
         importance: prospect.visible.publicRank <= 100 ? 4 : 3,
       },
+      ...collegeAccolades.map((accolade): HighSchoolCareerLogEntry => ({
+        year,
+        schoolYear: 3,
+        stageLabel: `${program.name} ${collegeYear}학년`,
+        type: "showcase",
+        headline: `${prospect.name}, ${accolade.label}`,
+        body: accolade.meaning,
+        importance: 3,
+      })),
     ],
   };
   return {
@@ -690,6 +703,14 @@ function collegeRiskTags(prospect: Prospect, route: NonNullable<Prospect["colleg
   return uniqueRiskTags(tags);
 }
 
+function createCollegeExposureAccolades(rng: Rng, prospect: Prospect, route: NonNullable<Prospect["collegeDraftRoute"]>): ProspectAccolade[] {
+  const rankSignal = prospect.visible.publicRank <= 80 ? 0.34 : prospect.visible.publicRank <= 140 ? 0.2 : prospect.visible.publicRank <= 220 ? 0.1 : 0.04;
+  const routeSignal = route === "early-entry" ? 0.1 : route === "regular" ? 0.08 : route === "redraft" ? 0.05 : 0.03;
+  const positionSignal = ["C", "SS", "CF", "SP"].includes(prospect.primaryPosition) ? 0.05 : 0;
+  const chance = clamp(rankSignal + routeSignal + positionSignal, 0.03, 0.52);
+  return rng.next() < chance ? [findAccolade("college-allstar")] : [];
+}
+
 function createOverseasReturneeAge(rng: Rng, overseasYears: number, lifestyle: NonNullable<Prospect["overseasLifestyle"]>): number {
   const lifestyleShift = lifestyle === "regular-starter" ? -0.4 : lifestyle === "training-only" ? 0.7 : lifestyle === "rehab-focused" ? 0.9 : 0.2;
   return roundTo(randomFloat(rng, 21.4 + overseasYears * 0.45 + lifestyleShift, 24.6 + overseasYears * 0.62 + lifestyleShift), 1);
@@ -749,6 +770,15 @@ function overseasPathLabel(path?: Prospect["overseasPath"]): string {
 
 function uniqueRiskTags(tags: ProspectRiskTag[]): ProspectRiskTag[] {
   return Array.from(new Set(tags));
+}
+
+function uniqueAccolades(accolades: ProspectAccolade[]): ProspectAccolade[] {
+  const seen = new Set<string>();
+  return accolades.filter((accolade) => {
+    if (seen.has(accolade.id)) return false;
+    seen.add(accolade.id);
+    return true;
+  });
 }
 
 function uniqueStringsLocal(values: string[]): string[] {
