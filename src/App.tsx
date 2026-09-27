@@ -1036,7 +1036,7 @@ function App() {
     setPhase("pre-draft");
     setSelectedId(nextDraft.prospects[0]?.id ?? "");
     setActiveTab("draft-room");
-    clearDraftListsForNewClass();
+    pruneDraftListsForNewPool(Object.keys(nextDraft.game.prospectsById));
     setNotifications((items) => [`${draftYear}년 드래프트 클래스로 이동했습니다. 드래프트 전 동향을 확인한 뒤 시작할 수 있습니다.`, ...items.slice(0, 4)]);
   }
 
@@ -1161,6 +1161,27 @@ function App() {
     writeStoredSet("draft-sm:favorites", emptySet);
     writeStoredSet("draft-sm:compare", emptySet);
     writeStoredSet("draft-sm:bigboard", emptySet);
+    writeStoredRecord("draft-sm:round-notes", {});
+  }
+
+  function pruneDraftListsForNewPool(nextProspectIds: string[]) {
+    const validIds = new Set(nextProspectIds);
+    setFavorites((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      writeStoredSet("draft-sm:favorites", next);
+      return next;
+    });
+    setCompareIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      writeStoredSet("draft-sm:compare", next);
+      return next;
+    });
+    setBigBoardIds((current) => {
+      const next = current.filter((id) => validIds.has(id));
+      writeStoredSet("draft-sm:bigboard", new Set(next));
+      return next;
+    });
+    setRoundNotes({});
     writeStoredRecord("draft-sm:round-notes", {});
   }
 
