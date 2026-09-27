@@ -8642,7 +8642,17 @@ function chooseDevelopmentOutcome(player: CareerPlayerState, delta: number, inju
 }
 
 function careerAge(player: CareerPlayerState, offsetYears = 0): number {
-  return Math.round(player.prospect.age) + player.yearsSinceDraft + offsetYears;
+  return careerEntryAge(player.prospect) + player.yearsSinceDraft + offsetYears;
+}
+
+function careerEntryAge(prospect: Prospect): number {
+  if (prospect.sourceType === "overseas-returnee") return Math.round(prospect.age);
+  if (prospect.sourceType === "college") {
+    return Math.max(19 + (prospect.collegeYear ?? 0), Math.round(prospect.age));
+  }
+
+  const extraHighSchoolYears = Math.max(0, prospect.draftEligibleYear - prospect.highSchoolEntryYear - 2);
+  return 19 + extraHighSchoolYears;
 }
 
 function agingCurveRisk(age: number): number {
