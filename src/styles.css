@@ -2424,6 +2424,70 @@ tbody tr:hover {
   background: #e9f2f8;
 }
 
+.prospect-table tr[data-drafted="true"] {
+  background: #f1f3f5;
+  color: #87919c;
+}
+
+.prospect-table tr[data-drafted="true"]:hover {
+  background: #eceff2;
+}
+
+.prospect-table tr[data-drafted="true"] .pos,
+.prospect-table tr[data-drafted="true"] .grade,
+.prospect-table tr[data-drafted="true"] .risk {
+  filter: grayscale(0.7);
+  opacity: 0.72;
+}
+
+.drafted-inline-badge {
+  border: 1px solid #cfd6de;
+  color: #687381;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  margin-left: 6px;
+  padding: 1px 5px;
+}
+
+.draft-pick-toast {
+  background: #17202a;
+  border: 1px solid #000;
+  bottom: 88px;
+  box-shadow: 0 12px 30px rgba(23, 32, 42, 0.24);
+  color: #fff;
+  display: grid;
+  gap: 3px;
+  left: 50%;
+  min-width: 320px;
+  padding: 12px 16px;
+  position: fixed;
+  text-align: center;
+  transform: translateX(-50%);
+  z-index: 40;
+}
+
+.draft-pick-toast span,
+.draft-pick-toast small {
+  color: #d9e0e7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.draft-pick-toast strong {
+  font-size: 18px;
+}
+
+.draft-pick-toast[data-user-pick="true"] {
+  background: #17324a;
+  border-color: #0b5c92;
+}
+
+.draft-pick-toast[data-panic="true"] {
+  background: #4a1f1f;
+  border-color: #b24848;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -3089,5 +3153,15 @@ ul {
     height: 48px;
     right: 12px;
     width: 48px;
+  }
+
+  .draft-pick-toast {
+    bottom: 72px;
+    min-width: 0;
+    width: calc(100vw - 24px);
+  }
+
+  .draft-pick-toast strong {
+    font-size: 16px;
   }
 }

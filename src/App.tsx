@@ -265,6 +265,8 @@ function App() {
   const [careerYearBucket, setCareerYearBucket] = useState<CareerYearBucket>("all");
   const [detailPlayerId, setDetailPlayerId] = useState<ProspectId | "">("");
   const [prospectDetailId, setProspectDetailId] = useState<ProspectId | "">("");
+  const [draftPickToast, setDraftPickToast] = useState<DraftSelectionView | undefined>();
+  const [isPickSequenceRunning, setIsPickSequenceRunning] = useState(false);
 
   const selectedTeam = teams.find((team) => team.id === userTeamId);
   const currentPick = phase === "draft" ? draftPicks[selections.length] : undefined;
@@ -275,6 +277,7 @@ function App() {
   const selectedDrafted = selected ? selections.some((selection) => selection.prospect.id === selected.id) : false;
   const draftedIds = useMemo(() => new Set(selections.map((selection) => selection.prospect.id)), [selections]);
   const availableProspects = useMemo(() => prospects.filter((prospect) => !draftedIds.has(prospect.id)), [draftedIds, prospects]);
+  const tableProspects = activeTab === "draft-room" ? prospects : availableProspects;
   const availableDraftProspects = useMemo(() => draftEligibleProspects.filter((prospect) => !draftedIds.has(prospect.id)), [draftEligibleProspects, draftedIds]);
   const accoladeOptions = useMemo(() => Array.from(new Set(prospects.flatMap((prospect) => prospect.accolades.map((accolade) => accolade.label)))).sort(), [prospects]);
   const comparedProspects = Array.from(compareIds)
@@ -282,7 +285,7 @@ function App() {
     .filter((prospect): prospect is Prospect => Boolean(prospect));
 
   const visibleProspects = useMemo(() => {
-    return availableProspects
+    return tableProspects
       .filter((prospect) => {
         if (positionFilter !== "all" && prospect.primaryPosition !== positionFilter) return false;
         if (schoolYearFilter === "eligible" && (prospect.draftEligibleYear !== displayDraftYear || isMlbDirectSigned(prospect))) return false;
@@ -301,7 +304,7 @@ function App() {
         return true;
       })
       .sort((a, b) => compareBySortKey(a, b, sortKey, sortDirection));
-  }, [accoladeFilter, activePreset, availableProspects, displayDraftYear, favoriteOnly, favorites, leagueFilter, playerTypeFilter, positionFilter, regionFilter, riskFilter, roundFilter, schoolFilter, schoolTierFilter, schoolYearFilter, selectedTeam, sortDirection, sortKey]);
+  }, [accoladeFilter, activePreset, displayDraftYear, favoriteOnly, favorites, leagueFilter, playerTypeFilter, positionFilter, regionFilter, riskFilter, roundFilter, schoolFilter, schoolTierFilter, schoolYearFilter, selectedTeam, sortDirection, sortKey, tableProspects]);
 
   const userSelections = selections.filter((selection) => selection.team.id === userTeamId);
   const canUserPick = Boolean(phase === "draft" && currentTeam?.id === userTeamId && selected && selected.draftEligibleYear === displayDraftYear && selected.schoolYear === 3 && !isMlbDirectSigned(selected) && !selectedDrafted);
@@ -433,6 +436,12 @@ function App() {
     const saved = writeSaveState(currentSaveState);
     setHasSavedCareer(saved);
   }, [currentSaveState, phase, scoutName, showStartScreen]);
+
+  useEffect(() => {
+    if (!draftPickToast) return undefined;
+    const timeout = window.setTimeout(() => setDraftPickToast(undefined), 1150);
+    return () => window.clearTimeout(timeout);
+  }, [draftPickToast]);
 
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
@@ -894,6 +903,8 @@ function App() {
 
 
   function applySelection(prospect: Prospect, pick: DraftPick, team: Team, meta: Pick<DraftSelectionView, "isPanicPick"> = {}) {
+    const nextSelection = { pick, team, prospect, ...meta };
+    setDraftPickToast(nextSelection);
     setSelections((current) => {
       if (current.some((selection) => selection.prospect.id === prospect.id) || current.length >= draftPicks.length) {
         return current;
@@ -912,7 +923,7 @@ function App() {
         ]);
       }
 
-      const next = [...current, { pick, team, prospect, ...meta }];
+      const next = [...current, nextSelection];
       if (next.length >= draftPicks.length) {
         setPhase("complete");
       }
@@ -935,48 +946,89 @@ function App() {
     applySelection(pickResult.prospect, currentPick, currentTeam, { isPanicPick: pickResult.isPanicPick });
   }
 
-  function runUntilUserPick() {
-    if (phase !== "draft" || !userTeamId) return;
-
-    setSelections((current) => {
-      const next = appendCpuSelectionsUntilUserPick(current);
-
-      if (next.length >= draftPicks.length) {
-        setPhase("complete");
-      }
-
-      const nextAvailable = draftEligibleProspects.find((prospect) => !next.some((selection) => selection.prospect.id === prospect.id));
-      if (nextAvailable) {
-        setSelectedId((currentId) => next.some((selection) => selection.prospect.id === currentId) ? nextAvailable.id : currentId);
-      }
-
-      return next;
-    });
+  async function runUntilUserPick() {
+    await runSequentialCpuPicksUntilUserPick();
   }
 
   function userPick(prospect: Prospect | undefined) {
     if (!currentPick || !currentTeam || currentTeam.id !== userTeamId || selectedDrafted) return;
     if (!prospect) return;
+    if (draftedIds.has(prospect.id)) return;
     if (isMlbDirectSigned(prospect)) return;
     if (prospect.draftEligibleYear !== displayDraftYear || prospect.schoolYear !== 3) return;
-    setSelections((current) => {
-      if (current.some((selection) => selection.prospect.id === prospect.id) || current.length >= draftPicks.length) {
-        return current;
-      }
+    applySelection(prospect, currentPick, currentTeam);
+    window.setTimeout(() => {
+      void runSequentialCpuPicksUntilUserPick();
+    }, 520);
+  }
 
-      const userSelection = [...current, { pick: currentPick, team: currentTeam, prospect }];
-      const next = appendCpuSelectionsUntilUserPick(userSelection);
-      if (next.length >= draftPicks.length) {
-        setPhase("complete");
+  async function runSequentialCpuPicksUntilUserPick() {
+    if (phase !== "draft" || !userTeamId || isPickSequenceRunning) return;
+    setIsPickSequenceRunning(true);
+    try {
+      await sleep(260);
+      let safety = 0;
+      while (safety < draftPicks.length) {
+        safety += 1;
+        const madePick = await runNextCpuPickInSequence();
+        if (!madePick) break;
+        await sleep(720);
       }
+    } finally {
+      setIsPickSequenceRunning(false);
+    }
+  }
 
-      const nextAvailable = draftEligibleProspects.find((candidate) => !next.some((selection) => selection.prospect.id === candidate.id));
-      if (nextAvailable && next.some((selection) => selection.prospect.id === selectedId)) {
-        setSelectedId(nextAvailable.id);
-      }
+  function runNextCpuPickInSequence(): Promise<boolean> {
+    return new Promise((resolve) => {
+      setSelections((current) => {
+        const pick = draftPicks[current.length];
+        const team = pick ? teams.find((candidate) => candidate.id === pick.ownerTeamId) : undefined;
+        if (!pick || !team || team.id === userTeamId) {
+          resolve(false);
+          return current;
+        }
 
-      return next;
+        const cpuAvailable = draftEligibleProspects.filter((candidate) => !current.some((selection) => selection.prospect.id === candidate.id));
+        if (cpuAvailable.length === 0) {
+          resolve(false);
+          return current;
+        }
+
+        const teamDrafted = current.filter((selection) => selection.team.id === team.id).map((selection) => selection.prospect);
+        const previousSelection = current[current.length - 1];
+        const pickResult = chooseCpuPickWithContext(team, cpuAvailable, pick.overall, teamDrafted, { previousPick: previousSelection?.prospect });
+        const selection: DraftSelectionView = { pick, team, prospect: pickResult.prospect, isPanicPick: pickResult.isPanicPick };
+        announceWatchedPick(selection);
+        setDraftPickToast(selection);
+        const next = [...current, selection];
+        if (next.length >= draftPicks.length) {
+          setPhase("complete");
+        }
+        const nextAvailable = draftEligibleProspects.find((candidate) => !next.some((item) => item.prospect.id === candidate.id));
+        if (nextAvailable) {
+          setSelectedId((currentId) => next.some((item) => item.prospect.id === currentId) ? nextAvailable.id : currentId);
+        }
+        resolve(true);
+        return next;
+      });
     });
+  }
+
+  function announceWatchedPick(selection: DraftSelectionView) {
+    if (selection.team.id === userTeamId) return;
+    if (favorites.has(selection.prospect.id)) {
+      setNotifications((items) => [
+        `${selection.pick.round}R ${selection.pick.overall}번: 관심 선수 ${selection.prospect.name}(${selection.prospect.primaryPosition})가 ${selection.team.shortName}에 지명되었습니다.`,
+        ...items.slice(0, 4),
+      ]);
+    }
+    if (bigBoardIds.slice(0, 12).includes(selection.prospect.id)) {
+      setNotifications((items) => [
+        `${selection.pick.round}R ${selection.pick.overall}번: 내 빅보드 상위 후보 ${selection.prospect.name}(${selection.prospect.primaryPosition})가 ${selection.team.shortName}에 지명되었습니다.`,
+        ...items.slice(0, 4),
+      ]);
+    }
   }
 
   function appendCpuSelectionsUntilUserPick(currentSelections: DraftSelectionView[]): DraftSelectionView[] {
@@ -1328,10 +1380,10 @@ function App() {
         <div className="topbar-actions">
           {activeTab !== "draft-room" && (
             <>
-              <button className="primary-progress-button" disabled={primaryProgressDisabled} onClick={handlePrimaryProgressAction}>
+              <button className="primary-progress-button" disabled={primaryProgressDisabled || isPickSequenceRunning} onClick={handlePrimaryProgressAction}>
                 {primaryProgressLabel}
               </button>
-              <button className="quick-year-button" disabled={fullAutoDisabled} onClick={autoAdvanceOneYear}>
+              <button className="quick-year-button" disabled={fullAutoDisabled || isPickSequenceRunning} onClick={autoAdvanceOneYear}>
                 한해 완전 자동
               </button>
             </>
@@ -1384,16 +1436,16 @@ function App() {
                   )}
                 </div>
                 <div className="draft-command-actions">
-                  <button className="primary-button large-action" disabled={!canUserPick} onClick={() => userPick(selected)}>
+                  <button className="primary-button large-action" disabled={!canUserPick || isPickSequenceRunning} onClick={() => userPick(selected)}>
                     선택 선수 지명
                   </button>
-                  <button className="text-button" disabled={!canUserPick || draftTimeoutsUsed >= 3} onClick={requestDraftTimeout}>
+                  <button className="text-button" disabled={!canUserPick || isPickSequenceRunning || draftTimeoutsUsed >= 3} onClick={requestDraftTimeout}>
                     타임 요청 {draftTimeoutsUsed}/3
                   </button>
-                  <button className="text-button" disabled={phase !== "draft"} onClick={runUntilUserPick}>
-                    내 차례까지 진행
+                  <button className="text-button" disabled={phase !== "draft" || isPickSequenceRunning} onClick={runUntilUserPick}>
+                    {isPickSequenceRunning ? "픽 진행 중" : "내 차례까지 진행"}
                   </button>
-                  <button className="text-button" disabled={phase !== "pre-draft" && phase !== "draft"} onClick={handlePrimaryProgressAction}>
+                  <button className="text-button" disabled={isPickSequenceRunning || (phase !== "pre-draft" && phase !== "draft")} onClick={handlePrimaryProgressAction}>
                     {phase === "pre-draft" ? primaryProgressLabel : "드래프트 전체 자동"}
                   </button>
                   <button className="text-button" disabled={fullAutoDisabled} onClick={autoAdvanceOneYear}>
@@ -1541,6 +1593,14 @@ function App() {
               <button data-active={teamSubTab === "draft"} onClick={() => setTeamSubTab("draft")}>드래프트 관련</button>
               <button data-active={teamSubTab === "status"} onClick={() => setTeamSubTab("status")}>구단 현황</button>
               <button data-active={teamSubTab === "fans"} onClick={() => setTeamSubTab("fans")}>팬</button>
+            </div>
+          )}
+
+          {draftPickToast && (
+            <div className="draft-pick-toast" data-user-pick={draftPickToast.team.id === userTeamId} data-panic={Boolean(draftPickToast.isPanicPick)}>
+              <span>{draftPickToast.pick.round}라운드 {draftPickToast.pick.overall}순위</span>
+              <strong>{draftPickToast.team.shortName}, {draftPickToast.prospect.name} 지명!</strong>
+              <small>{draftPickToast.prospect.school} · {positionLabel(draftPickToast.prospect.primaryPosition)}{draftPickToast.isPanicPick ? " · 패닉픽" : ""}</small>
             </div>
           )}
 
@@ -3038,16 +3098,22 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {visibleProspects.map((prospect) => (
-                <tr key={prospect.id} className={prospect.id === selected?.id ? "selected-row" : ""} onClick={() => openProspectDetail(prospect.id)}>
+              {visibleProspects.map((prospect) => {
+                const isDrafted = draftedIds.has(prospect.id);
+                const selection = selections.find((item) => item.prospect.id === prospect.id);
+                return (
+                <tr key={prospect.id} className={prospect.id === selected?.id ? "selected-row" : ""} data-drafted={isDrafted} onClick={() => openProspectDetail(prospect.id)}>
                   <td>
-                    <button className="icon-button" data-active={favorites.has(prospect.id)} onClick={(event) => { event.stopPropagation(); toggleFavorite(prospect.id); }}>★</button>
+                    <button className="icon-button" data-active={favorites.has(prospect.id)} disabled={isDrafted} onClick={(event) => { event.stopPropagation(); toggleFavorite(prospect.id); }}>★</button>
                   </td>
                   <td>
-                    <button className="icon-button" data-active={bigBoardIds.includes(prospect.id)} onClick={(event) => { event.stopPropagation(); toggleBigBoard(prospect.id); }}>▲</button>
+                    <button className="icon-button" data-active={bigBoardIds.includes(prospect.id)} disabled={isDrafted} onClick={(event) => { event.stopPropagation(); toggleBigBoard(prospect.id); }}>▲</button>
                   </td>
                   <td className="num">{prospect.visible.publicRank}</td>
-                  <td className="name-cell">{prospect.name}</td>
+                  <td className="name-cell">
+                    {prospect.name}
+                    {selection && <span className="drafted-inline-badge">{selection.pick.round}R {selection.team.shortName}</span>}
+                  </td>
                   <td className="num">{prospect.schoolYear}</td>
                   <td className="num">{prospect.draftEligibleYear}</td>
                   <td><span className={`pos pos-${prospect.primaryPosition}`}>{positionLabel(prospect.primaryPosition)}</span></td>
@@ -3076,10 +3142,12 @@ function App() {
                   <td className="num">{formatNumber(positionValue(prospect))}</td>
                   <td><span className={`risk risk-${prospect.visible.riskLevel}`}>{riskText(prospect.visible.riskLevel)}</span></td>
                   <td>
-                    <button className="small-button" data-active={compareIds.has(prospect.id)} disabled={!compareIds.has(prospect.id) && compareIds.size >= 4} onClick={(event) => { event.stopPropagation(); toggleCompare(prospect.id); }}>비교</button>
+                    <button className="small-button" data-active={compareIds.has(prospect.id)} disabled={isDrafted || (!compareIds.has(prospect.id) && compareIds.size >= 4)} onClick={(event) => { event.stopPropagation(); toggleCompare(prospect.id); }}>
+                      {isDrafted ? "지명완료" : "비교"}
+                    </button>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
               </table>
               </div>
@@ -3105,7 +3173,7 @@ function App() {
           {prospectDetail && (
             <ProspectDetailModal
               prospect={prospectDetail}
-              canDraft={phase === "draft" && currentTeam?.id === userTeamId && prospectDetail.draftEligibleYear === displayDraftYear && prospectDetail.schoolYear === 3 && !isMlbDirectSigned(prospectDetail) && !draftedIds.has(prospectDetail.id)}
+              canDraft={phase === "draft" && !isPickSequenceRunning && currentTeam?.id === userTeamId && prospectDetail.draftEligibleYear === displayDraftYear && prospectDetail.schoolYear === 3 && !isMlbDirectSigned(prospectDetail) && !draftedIds.has(prospectDetail.id)}
               phase={phase}
               onDraft={() => userPick(prospectDetail)}
               onClose={() => setProspectDetailId("")}
@@ -3350,6 +3418,10 @@ function stableIndex(seed: string, length: number): number {
     hash = (hash * 31 + seed.charCodeAt(index)) % 1000003;
   }
   return Math.abs(hash) % length;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function StartScreen({
