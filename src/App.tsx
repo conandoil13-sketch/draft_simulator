@@ -201,6 +201,7 @@ function App() {
   const [scoutName, setScoutName] = useState(savedAtBoot?.scoutName ?? "");
   const [legacyEndingSeen, setLegacyEndingSeen] = useState(savedAtBoot?.legacyEndingSeen ?? false);
   const [showLegacyModal, setShowLegacyModal] = useState(false);
+  const [developerScoutingMode, setDeveloperScoutingMode] = useState(false);
   const [pregameSeed, setPregameSeed] = useState(() => createRandomSeed());
   const [game, setGame] = useState<GameState | undefined>();
   const [dynamicTeams, setDynamicTeams] = useState<Team[]>([]);
@@ -406,10 +407,11 @@ function App() {
         ? "다음 드래프티 생성"
         : "1년 진행";
   const primaryProgressDisabled =
+    developerScoutingMode ||
     phase === "team-selection" ||
     phase === "generating" ||
     (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
-  const fullAutoDisabled = phase === "team-selection" || phase === "generating" || (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
+  const fullAutoDisabled = developerScoutingMode || phase === "team-selection" || phase === "generating" || (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
   const currentSaveState = useMemo<AppSaveState>(
     () => ({
       scoutName,
@@ -441,10 +443,11 @@ function App() {
   );
 
   useEffect(() => {
+    if (developerScoutingMode) return;
     if (showStartScreen || phase === "generating" || !scoutName.trim()) return;
     const saved = writeSaveState(currentSaveState);
     setHasSavedCareer(saved);
-  }, [currentSaveState, phase, scoutName, showStartScreen]);
+  }, [currentSaveState, developerScoutingMode, phase, scoutName, showStartScreen]);
 
   useEffect(() => {
     if (!draftPickToast) return undefined;
@@ -455,6 +458,7 @@ function App() {
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
+      if (developerScoutingMode) return;
       if (showStartScreen || phase === "generating" || !scoutName.trim()) return;
       event.preventDefault();
       saveCurrentJsonFile();
@@ -462,7 +466,7 @@ function App() {
 
     window.addEventListener("keydown", handleSaveShortcut);
     return () => window.removeEventListener("keydown", handleSaveShortcut);
-  }, [currentSaveState, phase, scoutName, showStartScreen]);
+  }, [currentSaveState, developerScoutingMode, phase, scoutName, showStartScreen]);
 
   useEffect(() => {
     if (careerYear >= 50 && !legacyEndingSeen && !showStartScreen) {
@@ -492,6 +496,7 @@ function App() {
   }
 
   function startNewCareer(name: string) {
+    setDeveloperScoutingMode(false);
     clearSaveState();
     setHasSavedCareer(false);
     setScoutName(name.trim() || "무명 스카우터");
@@ -500,6 +505,52 @@ function App() {
     setShowLegacyModal(false);
     setShowStartScreen(false);
     setPhase("team-selection");
+  }
+
+  function startDeveloperScoutingMode() {
+    const seed = createRandomSeed();
+    const nextGame = createNewGame(seed);
+    const nextProspects = Object.values(nextGame.prospectsById);
+    const emptySet = new Set<string>();
+    setDeveloperScoutingMode(true);
+    setScoutName("개발자 선수풀 테스트");
+    setPregameSeed(seed);
+    setGame(nextGame);
+    setDynamicTeams(nextGame.teams);
+    setUserTeamId(undefined);
+    setSelections([]);
+    setNotifications(["개발자 테스트 모드: 선수풀만 생성했습니다. 이 모드는 자동 저장과 JSON 저장을 하지 않습니다."]);
+    setPredraftIntelEvents([]);
+    setPredraftUserAction(undefined);
+    setPredraftStageIndex(0);
+    setDraftTimeoutsUsed(0);
+    setDraftTimeoutReports([]);
+    setCareerYear(0);
+    setCareerPlayers([]);
+    setExistingPlayers([]);
+    setCareerNews([]);
+    setSelectedCareerId("");
+    setSeasonResults([]);
+    setNextDraftPicks([]);
+    setPickTradeEvents([]);
+    setTeamTradeStrengthAdjustments({});
+    setNeedHistory([]);
+    setLegacyEndingSeen(false);
+    setShowLegacyModal(false);
+    setFavorites(emptySet);
+    setCompareIds(emptySet);
+    setBigBoardIds([]);
+    setRoundNotes({});
+    setSelectedId(nextProspects[0]?.id ?? "");
+    setProspectDetailId("");
+    setDetailPlayerId("");
+    setSourceTypeFilter("all");
+    setSchoolYearFilter("eligible");
+    setFavoriteOnly(false);
+    setActivePreset("none");
+    setActiveTab("scouting");
+    setPhase("pre-draft");
+    setShowStartScreen(false);
   }
 
   async function loadCareerFromJson(file: File) {
@@ -512,6 +563,7 @@ function App() {
   }
 
   function applyLoadedSaveState(saved: AppSaveState, message?: string) {
+    setDeveloperScoutingMode(false);
     setScoutName(saved.scoutName || "무명 스카우터");
     setGame(saved.game);
     setDynamicTeams(saved.dynamicTeams ?? []);
@@ -543,6 +595,7 @@ function App() {
   }
 
   function reincarnateCareer() {
+    setDeveloperScoutingMode(false);
     clearSaveState();
     setHasSavedCareer(false);
     setPregameSeed(createRandomSeed());
@@ -576,6 +629,7 @@ function App() {
   }
 
   function startDraft(teamId: TeamId, rank: number | "random" = initialRank) {
+    setDeveloperScoutingMode(false);
     setUserTeamId(teamId);
     setActiveTab("draft-room");
     setPhase("generating");
@@ -1382,11 +1436,11 @@ function App() {
 
   return (
     <main className="app-shell">
-      {showStartScreen && <StartScreen scoutName={scoutName} onNameChange={setScoutName} onStart={startNewCareer} onLoad={loadCareerFromJson} />}
+      {showStartScreen && <StartScreen scoutName={scoutName} onNameChange={setScoutName} onStart={startNewCareer} onLoad={loadCareerFromJson} onDeveloperScouting={startDeveloperScoutingMode} />}
       <header className="topbar">
         <div>
           <h1>고교야구 드래프트 보드</h1>
-          <p>{displayDraftYear} 드래프트 클래스 · 10라운드 {totalPicks}명 지명 · 올해 후보 {totalProspects}명 · 관찰 풀 {totalObservedProspects}명 · {scoutName || "스카우터"}</p>
+          <p>{displayDraftYear} 드래프트 클래스 · 10라운드 {totalPicks}명 지명 · 올해 후보 {totalProspects}명 · 관찰 풀 {totalObservedProspects}명 · {scoutName || "스카우터"}{developerScoutingMode ? " · 개발자 테스트 모드" : ""}</p>
         </div>
         <div className="topbar-actions">
           {activeTab !== "draft-room" && (
@@ -3218,7 +3272,7 @@ function App() {
           )}
         </>
       )}
-      {!showStartScreen && phase !== "generating" && (
+      {!showStartScreen && !developerScoutingMode && phase !== "generating" && (
         <button className="floating-save-button" onClick={saveCurrentJsonFile} title="JSON 세이브 저장 (Ctrl/Cmd+S)">
           저장
         </button>
@@ -3453,11 +3507,13 @@ function StartScreen({
   onNameChange,
   onStart,
   onLoad,
+  onDeveloperScouting,
 }: {
   scoutName: string;
   onNameChange: (value: string) => void;
   onStart: (name: string) => void;
   onLoad: (file: File) => void;
+  onDeveloperScouting: () => void;
 }) {
   const name = scoutName.trim();
   return (
@@ -3487,6 +3543,10 @@ function StartScreen({
               }}
             />
           </label>
+        </div>
+        <div className="start-option-row">
+          <button className="text-button" onClick={onDeveloperScouting}>개발자 선수풀 테스트</button>
+          <p>팀 선택 없이 올해 선수풀만 생성해 선수 탐색 화면으로 들어갑니다. 자동 저장과 JSON 저장은 하지 않습니다.</p>
         </div>
         <p className="empty">이름은 50년차 회고 서사와 스카우터 업적 기록에 표시됩니다.</p>
       </section>
