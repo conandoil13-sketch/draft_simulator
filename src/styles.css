@@ -314,6 +314,62 @@ h3 {
   overflow: auto;
 }
 
+.pro-stats-table-wrap {
+  border: 1px solid #d8dee6;
+  max-height: 330px;
+  overflow: auto;
+}
+
+.pro-stats-table {
+  border-collapse: collapse;
+  font-size: 11px;
+  min-width: 1180px;
+  width: 100%;
+}
+
+.pro-stats-table th,
+.pro-stats-table td {
+  border-bottom: 1px solid #e5e8ec;
+  padding: 5px 6px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pro-stats-table th:first-child,
+.pro-stats-table td:first-child,
+.pro-stats-table th:nth-child(2),
+.pro-stats-table td:nth-child(2),
+.pro-stats-table th:nth-child(3),
+.pro-stats-table td:nth-child(3) {
+  text-align: left;
+}
+
+.pro-stats-table thead th {
+  background: #eef2f5;
+  color: #344250;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pro-stats-table tbody tr[data-level="퓨처스"] {
+  color: #66717d;
+}
+
+.pro-stats-table tbody tr[data-level="군복무"],
+.pro-stats-table tbody tr[data-level="미출장"] {
+  background: #f7f7f7;
+  color: #89929c;
+}
+
+.pro-stats-table tfoot th {
+  background: #f1f6f9;
+  border-top: 2px solid #9eabb8;
+  bottom: 0;
+  font-weight: 800;
+  position: sticky;
+}
+
 .modal-tabs {
   border: 1px solid #ccd3db;
   display: inline-grid;
@@ -506,6 +562,36 @@ h3 {
 
 .start-option-row p {
   color: #66717d;
+}
+
+.start-mode-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.start-mode-grid button {
+  background: #f8fafc;
+  border: 1px solid #c8d0d9;
+  border-radius: 4px;
+  color: #17202a;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  text-align: left;
+}
+
+.start-mode-grid button[data-active="true"] {
+  background: #eef6fb;
+  border-color: #2875a7;
+  box-shadow: inset 3px 0 0 #2875a7;
+}
+
+.start-mode-grid button span {
+  color: #66717d;
+  font-size: 12px;
 }
 
 .team-option {
@@ -2964,6 +3050,7 @@ ul {
   }
 
   .team-grid,
+  .start-mode-grid,
   .draft-dashboard,
   .draft-board-section,
   .draft-aid-grid,

@@ -76,6 +76,7 @@ const ACCOLADES: ProspectAccolade[] = [
   { id: "phoenix-hr-king", label: "봉황대기 홈런왕", category: "hitting", meaning: "장타 생산력을 강하게 보여주지만 상위 레벨 변화구 대응은 별도 확인이 필요하다.", reputationBoost: 12, hypeBoost: 16 },
   { id: "emart-batting", label: "이마트배 타격상", category: "hitting", meaning: "타율과 출루 과정의 신뢰도를 올려주는 신호다.", reputationBoost: 11, hypeBoost: 10 },
   { id: "u18-national", label: "U-18 국가대표", category: "reputation", meaning: "또래 상위권 검증 이력으로 프로 적응 기대치와 구단 관심이 오른다.", reputationBoost: 16, hypeBoost: 15 },
+  { id: "u21-national", label: "U-21 국가대표", category: "reputation", meaning: "대학 선수 중 국제대회 엔트리에 선발된 이력이다. 동세대 상위권 검증과 다양한 상대 경험으로 리포트 신뢰도와 구단 관심이 오른다.", reputationBoost: 15, hypeBoost: 13 },
   { id: "college-hs-allstar", label: "대학·고교 올스타전 출전", category: "reputation", meaning: "스카우트 노출이 많아진 선수로 관심 구단이 늘기 쉽다.", reputationBoost: 9, hypeBoost: 9 },
   { id: "college-allstar", label: "대학 올스타 출전", category: "reputation", meaning: "대학·고교 올스타전에서 대학 올스타로 출전한 이력이다. 수상 타이틀보다는 대학 표본과 현장 노출이 늘어난 신호에 가깝다.", reputationBoost: 7, hypeBoost: 6 },
   { id: "lee-youngmin", label: "이영민 타격상", category: "hitting", meaning: "컨택 능력과 타격 정확도에 강한 공개 신호를 준다.", reputationBoost: 15, hypeBoost: 13 },
@@ -2001,21 +2002,28 @@ function applyQuotaAccoladesToClass(prospects: Prospect[], year: number): Prospe
     }
   };
   const byScore = (score: (prospect: Prospect) => number, pool = prospects) => [...pool].sort((left, right) => score(right) - score(left));
-  const hitters = prospects.filter((prospect) => prospect.hitterStats);
-  const pitchers = prospects.filter((prospect) => prospect.pitcherStats);
-  const olderEligible = prospects.filter((prospect) => prospect.schoolYear >= 2);
+  const highSchoolProspects = prospects.filter((prospect) => prospect.sourceType === "high-school");
+  const hitters = highSchoolProspects.filter((prospect) => prospect.hitterStats);
+  const pitchers = highSchoolProspects.filter((prospect) => prospect.pitcherStats);
+  const olderEligible = highSchoolProspects.filter((prospect) => prospect.schoolYear >= 2);
   add(byScore(hitterAwardScore, hitters)[0], "lee-youngmin");
   add(byScore(hitterAwardScore, hitters.filter((prospect) => (prospect.hitterStats?.average ?? 0) >= 0.32))[0], "emart-batting");
   add(byScore((prospect) => (prospect.hitterStats?.homeRuns ?? 0) * 9 + (prospect.hitterStats?.slugging ?? 0) * 90, hitters)[0], "phoenix-hr-king");
   add(byScore(pitcherAwardScore, pitchers)[0], "choi-dongwon");
   add(byScore(pitcherAwardScore, pitchers.filter((prospect) => (prospect.pitcherStats?.innings ?? 0) >= 35))[0], "blue-dragon-pitcher");
-  add(byScore(tournamentMvpScore, prospects)[0], "golden-lion-mvp");
+  add(byScore(tournamentMvpScore, highSchoolProspects)[0], "golden-lion-mvp");
   byScore(pitcherAwardScore, pitchers.filter((prospect) => prospect.primaryPosition === "SP" && (prospect.pitcherStats?.innings ?? 0) >= 40)).slice(0, 2).forEach((prospect) => add(prospect, "final-starter"));
   add(byScore((prospect) => (prospect.hitterStats?.defensiveGrade ?? 0) * 1.2 + (prospect.visible.publicRank <= 120 ? 14 : 0), hitters.filter((prospect) => prospect.primaryPosition === "C"))[0], "national-catcher");
   add(byScore((prospect) => (prospect.hitterStats?.defensiveGrade ?? 0) * 1.4 + (prospect.hitterStats?.athleticismGrade ?? 0) * 0.4, hitters.filter((prospect) => prospect.primaryPosition === "SS"))[0], "ss-defense");
 
   byScore(nationalTeamScore, olderEligible).slice(0, prospects[0]?.schoolYear === 2 ? 14 : 24).forEach((prospect) => add(prospect, "u18-national"));
   byScore(showcaseScore, olderEligible).slice(0, prospects[0]?.schoolYear === 2 ? 24 : 36).forEach((prospect) => add(prospect, "college-hs-allstar"));
+
+  const collegeProspects = prospects.filter((prospect) => prospect.sourceType === "college");
+  const u21DraftEntrantCount = Math.min(collegeProspects.length, Math.max(0, Math.round(collegeProspects.length * 0.16)));
+  byScore(collegeNationalTeamScore, collegeProspects)
+    .slice(0, u21DraftEntrantCount)
+    .forEach((prospect) => add(prospect, "u21-national"));
 
   return prospects.map((prospect) => applyAccoladesToProspect(prospect, awarded.get(prospect.id) ?? [], year));
 }
@@ -2182,13 +2190,13 @@ function applyAccoladesToProspect(prospect: Prospect, quotaAccolades: ProspectAc
     highSchoolCareerLog: [
       ...prospect.highSchoolCareerLog,
       ...quotaAccolades.map((accolade): HighSchoolCareerLogEntry => ({
-        year,
+        year: accoladeHistoryYear(prospect, accolade, year),
         schoolYear: prospect.schoolYear,
-        stageLabel: prospectTrackingStageLabel(prospect),
-        type: accolade.id === "u18-national" ? "national-team" : accolade.id === "college-hs-allstar" ? "showcase" : "accolade",
+        stageLabel: accoladeHistoryStageLabel(prospect, accolade),
+        type: accolade.id === "u18-national" || accolade.id === "u21-national" ? "national-team" : accolade.id === "college-hs-allstar" ? "showcase" : "accolade",
         headline: `${prospect.name}, ${accolade.label}`,
         body: accolade.meaning,
-        importance: accolade.id === "u18-national" || accolade.id === "golden-lion-mvp" || accolade.id === "lee-youngmin" || accolade.id === "choi-dongwon" ? 4 : 3,
+        importance: accolade.id === "u18-national" || accolade.id === "u21-national" || accolade.id === "golden-lion-mvp" || accolade.id === "lee-youngmin" || accolade.id === "choi-dongwon" ? 4 : 3,
       })),
     ],
   };
@@ -2198,13 +2206,23 @@ function applyAccoladesToProspect(prospect: Prospect, quotaAccolades: ProspectAc
   };
 }
 
+function accoladeHistoryYear(prospect: Prospect, accolade: ProspectAccolade, observationYear: number): number {
+  if (accolade.id !== "u21-national" || prospect.sourceType !== "college") return observationYear;
+  return observationYear - Math.max(0, (prospect.collegeYear ?? 2) - 2);
+}
+
+function accoladeHistoryStageLabel(prospect: Prospect, accolade: ProspectAccolade): string {
+  if (accolade.id !== "u21-national" || prospect.sourceType !== "college") return prospectTrackingStageLabel(prospect);
+  return `${prospect.school} ${Math.min(2, prospect.collegeYear ?? 2)}학년`;
+}
+
 function replaceCurrentSnapshot(prospect: Prospect, year: number, note: string): HighSchoolYearSnapshot[] {
   const snapshots = prospect.highSchoolSnapshots.filter((snapshot) => !(snapshot.year === year && snapshot.schoolYear === prospect.schoolYear));
   return [...snapshots, createHighSchoolSnapshot(prospect, year, note)].sort((left, right) => left.year - right.year || left.schoolYear - right.schoolYear);
 }
 
 function mergeTeamInterest(current: string[], accolades: ProspectAccolade[]): string[] {
-  const bonusCount = accolades.some((accolade) => accolade.id === "u18-national" || accolade.id === "golden-lion-mvp") ? 3 : 2;
+  const bonusCount = accolades.some((accolade) => accolade.id === "u18-national" || accolade.id === "u21-national" || accolade.id === "golden-lion-mvp") ? 3 : 2;
   return Array.from(new Set([...current, ...["서울", "부산", "인천", "대구", "광주"].slice(0, bonusCount)])).slice(0, 6);
 }
 
@@ -2229,6 +2247,18 @@ function nationalTeamScore(prospect: Prospect): number {
   const middlePositionBonus = ["SP", "C", "SS", "CF"].includes(prospect.primaryPosition) ? 12 : 0;
   const performance = prospect.pitcherStats ? pitcherAwardScore(prospect) : hitterAwardScore(prospect);
   return performance + middlePositionBonus + (prospect.visible.publicRank <= 60 ? 18 : 0) + prospect.reputation * 0.4;
+}
+
+function collegeNationalTeamScore(prospect: Prospect): number {
+  const routeBonus = prospect.collegeDraftRoute === "early-entry"
+    ? 10
+    : prospect.collegeDraftRoute === "regular"
+      ? 6
+      : prospect.collegeDraftRoute === "redraft"
+        ? 3
+        : 2;
+  const exposureBonus = prospect.accolades.some((accolade) => accolade.id === "college-allstar") ? 8 : 0;
+  return nationalTeamScore(prospect) + routeBonus + exposureBonus + prospect.visible.confidence * 10;
 }
 
 function showcaseScore(prospect: Prospect): number {

@@ -88,6 +88,7 @@ export type DraftTimeoutReport = {
 
 export type AppSaveState = {
   scoutName: string;
+  careerStartYear?: number;
   game?: GameState;
   dynamicTeams: Team[];
   phase: DraftPhase;
@@ -161,6 +162,7 @@ export type SeasonDevelopmentClimate = {
 
 export type CareerPlayerState = {
   playerId: ProspectId;
+  preCareerHistory?: boolean;
   prospect: Prospect;
   team: Team;
   pick: DraftPick;
@@ -191,7 +193,64 @@ export type CareerPlayerState = {
   militaryStatus?: "none" | "serving" | "completed" | "exempt";
   militaryType?: "상무" | "일반 병역";
   militaryServiceUntilYear?: number;
+  proSeasonStats?: ProSeasonStats[];
 };
+
+export type ProSeasonLevel = "1군" | "퓨처스" | "군복무" | "미출장";
+
+export type ProSeasonBase = {
+  seasonYear: number;
+  careerYear: number;
+  teamId: TeamId;
+  teamName: string;
+  age: number;
+  position: Position;
+  level: ProSeasonLevel;
+  games: number;
+  war: number;
+};
+
+export type ProHitterSeasonStats = ProSeasonBase & {
+  kind: "hitter";
+  plateAppearances: number;
+  atBats: number;
+  runs: number;
+  hits: number;
+  doubles: number;
+  triples: number;
+  homeRuns: number;
+  runsBattedIn: number;
+  walks: number;
+  strikeouts: number;
+  stolenBases: number;
+  caughtStealing: number;
+  average: number;
+  onBasePercentage: number;
+  sluggingPercentage: number;
+  ops: number;
+  fieldingValue: number;
+};
+
+export type ProPitcherSeasonStats = ProSeasonBase & {
+  kind: "pitcher";
+  gamesStarted: number;
+  innings: number;
+  wins: number;
+  losses: number;
+  saves: number;
+  holds: number;
+  hitsAllowed: number;
+  homeRunsAllowed: number;
+  walks: number;
+  strikeouts: number;
+  earnedRuns: number;
+  era: number;
+  whip: number;
+  strikeoutsPerNine: number;
+  walksPerNine: number;
+};
+
+export type ProSeasonStats = ProHitterSeasonStats | ProPitcherSeasonStats;
 
 export type CareerNewsItem = {
   id: string;
@@ -322,6 +381,9 @@ export type TeamSeasonResult = {
   pickTradeImpact: number;
   randomSwing: number;
   nextFirstRoundPick: number;
+  nationalTeamTournament?: string;
+  nationalTeamResult?: string;
+  nationalTeamStrength?: number;
 };
 
 export type PickTradeEvent = {

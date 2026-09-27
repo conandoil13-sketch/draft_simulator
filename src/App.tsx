@@ -66,6 +66,10 @@ import type {
   NewsViewMode,
   PickTradeEvent,
   PreDraftAction,
+  ProHitterSeasonStats,
+  ProPitcherSeasonStats,
+  ProSeasonLevel,
+  ProSeasonStats,
   PlayerTypeFilter,
   RecordBreakerRow,
   RemainingPoolSummary,
@@ -125,6 +129,8 @@ const STAT_CAREER_LOG_TYPES = new Set([
   "상무 복무",
 ]);
 const PREDRAFT_STAGES: DraftIntelEvent["stage"][] = ["D-30", "D-14", "D-7", "D-1", "당일"];
+type CareerStartMode = "fresh" | "established";
+const ESTABLISHED_LEAGUE_YEARS = 10;
 let activeJsonSaveHandle: SaveFileHandle | undefined;
 
 function readStoredSet(key: string): Set<string> {
@@ -202,6 +208,8 @@ function App() {
   const [legacyEndingSeen, setLegacyEndingSeen] = useState(savedAtBoot?.legacyEndingSeen ?? false);
   const [showLegacyModal, setShowLegacyModal] = useState(false);
   const [developerScoutingMode, setDeveloperScoutingMode] = useState(false);
+  const [careerStartMode, setCareerStartMode] = useState<CareerStartMode>("fresh");
+  const [careerStartYear, setCareerStartYear] = useState(savedAtBoot?.careerStartYear ?? 0);
   const [pregameSeed, setPregameSeed] = useState(() => createRandomSeed());
   const [game, setGame] = useState<GameState | undefined>();
   const [dynamicTeams, setDynamicTeams] = useState<Team[]>([]);
@@ -389,7 +397,17 @@ function App() {
   const releaseRows = useMemo(() => careerPlayers.filter((player) => player.status === "방출" || player.status === "은퇴" || player.status === "해외진출").sort((left, right) => right.yearsSinceDraft - left.yearsSinceDraft || left.pick.overall - right.pick.overall), [careerPlayers]);
   const hasTrackingHistory = careerPlayers.length > 0 || careerNews.length > 0;
   const hasLeagueHistory = seasonResults.length > 0 || pickTradeEvents.length > 0 || careerPlayers.length > 0;
-  const legacySummary = useMemo(() => createScoutLegacySummary(scoutName || "스카우터", selectedTeam, careerPlayers, seasonResults, yearlyAwardRows, allRecordBreakerRows, careerYear), [allRecordBreakerRows, careerPlayers, careerYear, scoutName, seasonResults, selectedTeam, yearlyAwardRows]);
+  const scoutCareerYears = Math.max(0, careerYear - careerStartYear);
+  const scoutStartSeasonYear = (game?.currentYear ?? 2026) - scoutCareerYears;
+  const legacySummary = useMemo(() => createScoutLegacySummary(
+    scoutName || "스카우터",
+    selectedTeam,
+    careerPlayers,
+    seasonResults.filter((result) => result.yearIndex > careerStartYear),
+    yearlyAwardRows.filter((row) => row.seasonYear >= scoutStartSeasonYear),
+    allRecordBreakerRows.filter((row) => row.year > careerStartYear),
+    scoutCareerYears,
+  ), [allRecordBreakerRows, careerPlayers, careerStartYear, scoutCareerYears, scoutName, scoutStartSeasonYear, seasonResults, selectedTeam, yearlyAwardRows]);
   const revealedPredraftStages = predraftUserAction ? PREDRAFT_STAGES.slice(0, predraftStageIndex) : [];
   const visiblePredraftIntelEvents = predraftIntelEvents.filter((event) => event.type === "타임 회의" || revealedPredraftStages.includes(event.stage));
   const nextPredraftStage = predraftUserAction ? PREDRAFT_STAGES[predraftStageIndex] : undefined;
@@ -415,6 +433,7 @@ function App() {
   const currentSaveState = useMemo<AppSaveState>(
     () => ({
       scoutName,
+      careerStartYear,
       game,
       dynamicTeams,
       phase,
@@ -439,7 +458,7 @@ function App() {
       needHistory,
       legacyEndingSeen,
     }),
-    [activeTab, careerNews, careerPlayers, careerYear, draftTimeoutReports, draftTimeoutsUsed, dynamicTeams, existingPlayers, game, legacyEndingSeen, needHistory, nextDraftPicks, notifications, phase, pickTradeEvents, predraftIntelEvents, predraftStageIndex, predraftUserAction, scoutName, seasonResults, selectedCareerId, selections, teamTradeStrengthAdjustments, userTeamId],
+    [activeTab, careerNews, careerPlayers, careerStartYear, careerYear, draftTimeoutReports, draftTimeoutsUsed, dynamicTeams, existingPlayers, game, legacyEndingSeen, needHistory, nextDraftPicks, notifications, phase, pickTradeEvents, predraftIntelEvents, predraftStageIndex, predraftUserAction, scoutName, seasonResults, selectedCareerId, selections, teamTradeStrengthAdjustments, userTeamId],
   );
 
   useEffect(() => {
@@ -469,11 +488,11 @@ function App() {
   }, [currentSaveState, developerScoutingMode, phase, scoutName, showStartScreen]);
 
   useEffect(() => {
-    if (careerYear >= 50 && !legacyEndingSeen && !showStartScreen) {
+    if (scoutCareerYears >= 50 && !legacyEndingSeen && !showStartScreen) {
       setShowLegacyModal(true);
       setLegacyEndingSeen(true);
     }
-  }, [careerYear, legacyEndingSeen, showStartScreen]);
+  }, [legacyEndingSeen, scoutCareerYears, showStartScreen]);
 
   function isCollapsed(key: string): boolean {
     return Boolean(collapsedSections[key]);
@@ -495,11 +514,13 @@ function App() {
     setNotifications((items) => [message, ...items.slice(0, 4)]);
   }
 
-  function startNewCareer(name: string) {
+  function startNewCareer(name: string, mode: CareerStartMode) {
     setDeveloperScoutingMode(false);
     clearSaveState();
     setHasSavedCareer(false);
     setScoutName(name.trim() || "무명 스카우터");
+    setCareerStartMode(mode);
+    setCareerStartYear(0);
     setPregameSeed(createRandomSeed());
     setLegacyEndingSeen(false);
     setShowLegacyModal(false);
@@ -526,6 +547,7 @@ function App() {
     setDraftTimeoutsUsed(0);
     setDraftTimeoutReports([]);
     setCareerYear(0);
+    setCareerStartYear(0);
     setCareerPlayers([]);
     setExistingPlayers([]);
     setCareerNews([]);
@@ -578,6 +600,7 @@ function App() {
     setDraftTimeoutsUsed(saved.draftTimeoutsUsed ?? 0);
     setDraftTimeoutReports(saved.draftTimeoutReports ?? []);
     setCareerYear(saved.careerYear ?? 0);
+    setCareerStartYear(saved.careerStartYear ?? 0);
     setCareerPlayers(saved.careerPlayers ?? []);
     setExistingPlayers(saved.existingPlayers ?? []);
     setCareerNews(saved.careerNews ?? []);
@@ -613,6 +636,7 @@ function App() {
     setDraftTimeoutsUsed(0);
     setDraftTimeoutReports([]);
     setCareerYear(0);
+    setCareerStartYear(0);
     setCareerPlayers([]);
     setExistingPlayers([]);
     setCareerNews([]);
@@ -675,6 +699,27 @@ function App() {
     writeStoredRecord("draft-sm:round-notes", {});
 
     window.setTimeout(() => {
+      if (careerStartMode === "established") {
+        const established = createEstablishedLeagueStart(pregameSeed, teamId, rank);
+        const nextProspects = Object.values(established.game.prospectsById);
+        setGame(established.game);
+        setDynamicTeams(established.teams);
+        setCareerStartYear(ESTABLISHED_LEAGUE_YEARS);
+        setCareerYear(ESTABLISHED_LEAGUE_YEARS);
+        setCareerPlayers(established.careerPlayers);
+        setExistingPlayers(established.existingPlayers);
+        setSeasonResults(established.seasonResults);
+        setNextDraftPicks([]);
+        setPickTradeEvents(established.pickTradeEvents);
+        setTeamTradeStrengthAdjustments(established.teamTradeStrengthAdjustments);
+        setNeedHistory(established.needHistory);
+        setSelectedCareerId(established.careerPlayers.find((player) => player.team.id === teamId)?.playerId ?? "");
+        setSelectedId(nextProspects[0]?.id ?? "");
+        setPredraftIntelEvents(createPreDraftIntelEvents(established.game.currentYear, established.teams, nextProspects, teamId));
+        setNotifications([`${established.game.currentYear}년, 10시즌의 역사를 가진 리그에 취임했습니다. 기존 로스터와 구단별 흐름이 반영되어 있습니다.`]);
+        setPhase("pre-draft");
+        return;
+      }
       const nextGame = createNewGame(pregameSeed, {
         userTeamId: teamId,
         userInitialRank: rank === "random" ? undefined : rank,
@@ -683,6 +728,7 @@ function App() {
       setGame(nextGame);
       setDynamicTeams(nextGame.teams);
       setExistingPlayers(createInitialExistingPlayers(nextGame.teams));
+      setCareerStartYear(0);
       setNeedHistory(createNeedSnapshots(nextGame.currentYear - 1, nextGame.teams));
       setSelectedId(nextProspects[0]?.id ?? "");
       setPredraftIntelEvents(createPreDraftIntelEvents(nextGame.currentYear, nextGame.teams, nextProspects, teamId));
@@ -1176,7 +1222,7 @@ function App() {
 
     setPhase("complete");
     simulateCareerYear(completedSelections, careerPlayers, prospectPool, nextCareerYear);
-    if (nextCareerYear >= 50 && !legacyEndingSeen) {
+    if (nextCareerYear - careerStartYear >= 50 && !legacyEndingSeen) {
       setShowLegacyModal(true);
       setLegacyEndingSeen(true);
     }
@@ -1231,6 +1277,121 @@ function App() {
     }
 
     return next;
+  }
+
+  function createEstablishedLeagueStart(seed: string, teamId: TeamId, rank: number | "random") {
+    const baseGame = createNewGame(seed, {
+      userTeamId: teamId,
+      userInitialRank: rank === "random" ? undefined : rank,
+    });
+    const schools = Object.values(baseGame.schoolsById);
+    let leagueTeams = baseGame.teams;
+    let prospectPool = Object.values(baseGame.prospectsById);
+    let picks = baseGame.draftPicksByYear[baseGame.currentYear];
+    let classQuality = baseGame.draftClassProfilesByYear?.[baseGame.currentYear];
+    let players: CareerPlayerState[] = [];
+    let leagueExistingPlayers = createInitialExistingPlayers(leagueTeams);
+    let results: TeamSeasonResult[] = [];
+    let needs = createNeedSnapshots(baseGame.currentYear - 1, leagueTeams);
+    let trades: PickTradeEvent[] = [];
+    let strengthAdjustments: Record<string, number> = {};
+
+    for (let offset = 0; offset < ESTABLISHED_LEAGUE_YEARS; offset += 1) {
+      const seasonYear = baseGame.currentYear + offset;
+      const yearIndex = offset + 1;
+      const eligible = prospectPool.filter((prospect) => isDraftEligibleProspect(prospect, seasonYear));
+      const draftSelections = completeDraftAutomatically([], picks, eligible, leagueTeams);
+      players = [...players, ...createInitialCareerPlayers(draftSelections)];
+
+      const warmupNews: CareerNewsItem[] = [];
+      const watchedIds = new Set<ProspectId>();
+      const missedIds = new Set<ProspectId>();
+      const climate = createSeasonDevelopmentClimate();
+      players = applyMilitaryServiceTransitions(players, yearIndex, seasonYear, teamId, watchedIds, missedIds, warmupNews)
+        .map((player) => advanceCareerPlayer(player, yearIndex, teamId, watchedIds, missedIds, leagueTeams, warmupNews, climate));
+      players = assignBullpenRoles(
+        applyTeamRoleAdjustments(
+          applyRosterLimitCuts(players, yearIndex, teamId, watchedIds, missedIds, leagueTeams, warmupNews),
+          leagueTeams,
+          yearIndex,
+          teamId,
+          watchedIds,
+          missedIds,
+          warmupNews,
+        ),
+        leagueTeams,
+      );
+      leagueExistingPlayers = advanceExistingPlayers(leagueExistingPlayers, yearIndex);
+
+      const previousResults = results.filter((result) => result.yearIndex === yearIndex - 1);
+      const seasonResults = simulateTeamSeason(leagueTeams, draftSelections, players, leagueExistingPlayers, seasonYear, yearIndex, previousResults, strengthAdjustments);
+      players = simulateProSeasonStats(players, seasonResults, leagueExistingPlayers, seasonYear, yearIndex);
+      awardSingleRookieOfYear(players, yearIndex, teamId, watchedIds, missedIds, warmupNews);
+      applySeasonAwardAchievements(players, createAwardRowsForSeason(seasonYear, yearIndex, players, leagueTeams, leagueExistingPlayers, seasonResults), yearIndex, teamId, watchedIds, missedIds, warmupNews);
+      addSeasonSelectionHonors(players, leagueExistingPlayers, leagueTeams, yearIndex, seasonYear, teamId, watchedIds, missedIds, warmupNews, seasonResults);
+      results = [...results, ...seasonResults];
+
+      const needsUpdate = updateTeamNeedsAfterSeason(leagueTeams, players, seasonYear);
+      leagueTeams = recalibrateEstablishedTeamDepth(needsUpdate.teams.map((team) => {
+        const result = seasonResults.find((candidate) => candidate.teamId === team.id);
+        if (!result) return team;
+        const currentStrength = Math.round(clampNumber(result.strengthScore * 0.68 + result.seasonPerformanceScore * 0.2 + team.currentStrength * 0.12, 36, 92));
+        const baseStrength = Math.round(clampNumber(team.baseStrength * 0.76 + result.strengthScore * 0.24, 38, 82));
+        const teamWindow = result.rank <= 3 ? "contending" : result.rank >= 8 ? "rebuilding" : "developing";
+        return { ...team, currentStrength, baseStrength, teamWindow };
+      }), players);
+      needs = [...needs, ...createNeedSnapshots(seasonYear, leagueTeams)].slice(-120);
+
+      const nextPicks = createNextDraftPicksFromSeason(seasonResults, seasonYear + 1, baseGame.settings.rounds);
+      const tradeResult = applyPickTradeEvents(nextPicks, leagueTeams, teamId, seasonYear, yearIndex);
+      picks = tradeResult.picks;
+      trades = [...tradeResult.events, ...trades].slice(0, 40);
+      strengthAdjustments = mergeStrengthAdjustments(strengthAdjustments, tradeResult.strengthAdjustments);
+
+      const nextYear = seasonYear + 1;
+      const poolRng = createSeededRng(`${seed}-established-${nextYear}`);
+      const advancedPool = advanceHighSchoolPlayerPool(poolRng, nextYear, baseGame.settings.prospectsPerYear, prospectPool, schools);
+      prospectPool = advancedPool.prospects;
+      classQuality = advancedPool.classQuality;
+    }
+
+    players = players.map((player) => {
+      const inactive = player.status === "방출" || player.status === "은퇴" || player.status === "해외진출";
+      const onUserTeam = player.team.id === teamId;
+      const trackingStatus: TrackingStatus = inactive || !onUserTeam
+        ? "archived"
+        : player.currentOverall >= 68 || player.debuted
+          ? "follow"
+          : "summary";
+      return { ...player, preCareerHistory: true, trackingStatus, trackingArchivedAtYear: trackingStatus === "archived" ? ESTABLISHED_LEAGUE_YEARS : undefined };
+    });
+
+    const currentYear = baseGame.currentYear + ESTABLISHED_LEAGUE_YEARS;
+    const currentDraftProspects = prospectPool.filter((prospect) => isDraftEligibleProspect(prospect, currentYear));
+    const gameState: GameState = {
+      ...baseGame,
+      turn: ESTABLISHED_LEAGUE_YEARS,
+      phase: "team-selection",
+      currentYear,
+      userTeamId: teamId,
+      teams: leagueTeams,
+      prospectsById: Object.fromEntries(prospectPool.map((prospect) => [prospect.id, prospect])),
+      draftClassProfilesByYear: classQuality ? { [currentYear]: classQuality } : {},
+      draftClassesByYear: { [currentYear]: currentDraftProspects.map((prospect) => prospect.id) },
+      draftPicksByYear: { [currentYear]: picks },
+      seasonHistoryByYear: {},
+    };
+
+    return {
+      game: gameState,
+      teams: leagueTeams,
+      careerPlayers: players,
+      existingPlayers: leagueExistingPlayers,
+      seasonResults: results,
+      pickTradeEvents: trades,
+      teamTradeStrengthAdjustments: strengthAdjustments,
+      needHistory: needs,
+    };
   }
 
   function currentDraftAlreadySimulated(selectionSource: DraftSelectionView[]): boolean {
@@ -1324,13 +1485,15 @@ function App() {
     const advancedPlayers = militaryManagedPlayers.map((player) => advanceCareerPlayer(player, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, teams, news, developmentClimate));
     applyUserInboundTransactions(advancedPlayers, nextYear, userTeamId, teams, watchedIds, nextAfterUserPickIds, news);
     const roleAdjustedPlayers = applyTeamRoleAdjustments(applyRosterLimitCuts(advancedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, teams, news), teams, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
-    const rosterLimitedPlayers = assignBullpenRoles(roleAdjustedPlayers, teams);
+    let rosterLimitedPlayers = assignBullpenRoles(roleAdjustedPlayers, teams);
     const nextExistingPlayers = advanceExistingPlayers(existingPlayers.length > 0 ? existingPlayers : createInitialExistingPlayers(teams), nextYear);
-    awardSingleRookieOfYear(rosterLimitedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
-    addSeasonSelectionHonors(rosterLimitedPlayers, nextExistingPlayers, teams, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
-    const nextPlayers = applyDefaultTrackingAfterSeason(rosterLimitedPlayers, userTeamId, nextYear);
     const previousResults = seasonResults.filter((result) => result.yearIndex === careerYear);
-    const nextSeasonResults = simulateTeamSeason(teams, selectionSource, nextPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments);
+    const nextSeasonResults = simulateTeamSeason(teams, selectionSource, rosterLimitedPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments);
+    rosterLimitedPlayers = simulateProSeasonStats(rosterLimitedPlayers, nextSeasonResults, nextExistingPlayers, seasonYear, nextYear);
+    awardSingleRookieOfYear(rosterLimitedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
+    applySeasonAwardAchievements(rosterLimitedPlayers, createAwardRowsForSeason(seasonYear, nextYear, rosterLimitedPlayers, teams, nextExistingPlayers, nextSeasonResults), nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
+    addSeasonSelectionHonors(rosterLimitedPlayers, nextExistingPlayers, teams, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news, nextSeasonResults);
+    const nextPlayers = applyDefaultTrackingAfterSeason(rosterLimitedPlayers, userTeamId, nextYear);
     applyOverseasShowcaseEvents(nextPlayers, nextSeasonResults, seasonResults, seasonYear, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     const nextYearPicks = createNextDraftPicksFromSeason(nextSeasonResults, seasonYear + 1, game?.settings.rounds ?? 10);
     const tradeResult = applyPickTradeEvents(nextYearPicks, teams, userTeamId, seasonYear, nextYear);
@@ -1462,9 +1625,9 @@ function App() {
         </div>
       </header>
 
-      {!showStartScreen && phase === "team-selection" && <TeamSelectionModal teams={teams} initialRank={initialRank} onRankChange={setInitialRank} onSelect={startDraft} />}
+      {!showStartScreen && phase === "team-selection" && <TeamSelectionModal teams={teams} initialRank={initialRank} startMode={careerStartMode} onRankChange={setInitialRank} onSelect={startDraft} />}
 
-      {!showStartScreen && phase === "generating" && <GeneratingModal count={totalProspects} />}
+      {!showStartScreen && phase === "generating" && <GeneratingModal count={totalProspects} established={careerStartMode === "established"} />}
 
       {showLegacyModal && <LegacyEndingModal summary={legacySummary} onImmortal={chooseImmortality} onReincarnate={reincarnateCareer} />}
 
@@ -3511,11 +3674,12 @@ function StartScreen({
 }: {
   scoutName: string;
   onNameChange: (value: string) => void;
-  onStart: (name: string) => void;
+  onStart: (name: string, mode: CareerStartMode) => void;
   onLoad: (file: File) => void;
   onDeveloperScouting: () => void;
 }) {
   const name = scoutName.trim();
+  const [startMode, setStartMode] = useState<CareerStartMode>("fresh");
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="team-select-modal" role="dialog" aria-modal="true" aria-labelledby="start-title">
@@ -3525,12 +3689,22 @@ function StartScreen({
             <p>50년 뒤 리그가 당신의 이름과 함께 기억할 드래프트 연대기를 시작합니다.</p>
           </div>
         </div>
+        <div className="start-mode-grid" aria-label="시작 모드">
+          <button type="button" data-active={startMode === "fresh"} onClick={() => setStartMode("fresh")}>
+            <strong>기본 시작</strong>
+            <span>2026년 첫 드래프트부터 리그의 역사를 직접 만듭니다.</span>
+          </button>
+          <button type="button" data-active={startMode === "established"} onClick={() => setStartMode("established")}>
+            <strong>10년 선행 리그</strong>
+            <span>CPU가 10시즌을 먼저 진행한 2036년, 기존 로스터와 역사를 이어받습니다.</span>
+          </button>
+        </div>
         <div className="tracking-toolbar">
           <label className="select-control">
             <span>내 이름</span>
             <input value={scoutName} onChange={(event) => onNameChange(event.target.value)} placeholder="예: 김수호" />
           </label>
-          <button className="primary-button" onClick={() => onStart(name || "무명 스카우터")}>처음부터</button>
+          <button className="primary-button" onClick={() => onStart(name || "무명 스카우터", startMode)}>{startMode === "established" ? "10년 선행 후 시작" : "처음부터"}</button>
           <label className="text-button file-load-button">
             불러오기
             <input
@@ -3599,11 +3773,13 @@ function LegacyEndingModal({ summary, onImmortal, onReincarnate }: { summary: Sc
 function TeamSelectionModal({
   teams,
   initialRank,
+  startMode,
   onRankChange,
   onSelect,
 }: {
   teams: Team[];
   initialRank: number | "random";
+  startMode: CareerStartMode;
   onRankChange: (rank: number | "random") => void;
   onSelect: (teamId: TeamId, rank: number | "random") => void;
 }) {
@@ -3613,7 +3789,7 @@ function TeamSelectionModal({
         <div className="panel-head">
           <div>
             <h2 id="team-select-title">구단 선택</h2>
-            <p>10개 가상 구단 중 하나를 선택하면 팀 니즈, 성향, 전력과 첫 드래프트 순번이 새 커리어마다 조금씩 달라집니다.</p>
+            <p>{startMode === "established" ? "10개 구단이 10시즌을 먼저 치른 뒤, 선택한 구단의 2036년 스카우터로 취임합니다." : "10개 가상 구단 중 하나를 선택하면 팀 니즈, 성향, 전력과 첫 드래프트 순번이 새 커리어마다 조금씩 달라집니다."}</p>
           </div>
         </div>
         <div className="start-option-row">
@@ -3626,7 +3802,7 @@ function TeamSelectionModal({
               ))}
             </select>
           </label>
-          <p>10위로 시작하면 첫 드래프트 1순위, 1위로 시작하면 10순위입니다.</p>
+          <p>{startMode === "established" ? "선택 순위는 선행 리그의 첫 시즌 출발점입니다. 취임 시점 순위와 전력은 10년간의 결과에 따라 달라집니다." : "10위로 시작하면 첫 드래프트 1순위, 1위로 시작하면 10순위입니다."}</p>
         </div>
         <div className="team-grid">
           {teams.map((team) => (
@@ -3643,12 +3819,12 @@ function TeamSelectionModal({
   );
 }
 
-function GeneratingModal({ count }: { count: number }) {
+function GeneratingModal({ count, established = false }: { count: number; established?: boolean }) {
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="generating-modal" role="status" aria-live="polite">
-        <h2>선수 명단 생성 중</h2>
-        <p>올해 드래프트 풀 {count}명을 새로 만들고 있습니다.</p>
+        <h2>{established ? "리그 역사 생성 중" : "선수 명단 생성 중"}</h2>
+        <p>{established ? `10년치 드래프트, 선수 성장과 구단 순위를 계산한 뒤 올해 후보 ${count}명을 준비하고 있습니다.` : `올해 드래프트 풀 ${count}명을 새로 만들고 있습니다.`}</p>
         <div className="loading-bar" aria-hidden="true">
           <span />
         </div>
@@ -4357,6 +4533,10 @@ function CareerPlayerModal({
           </div>
         ) : (
           <div className="modal-detail-grid">
+            <section className="detail-block wide-detail-block">
+              <h3>연도별 프로 기록</h3>
+              <ProSeasonStatsTable player={player} />
+            </section>
             <section className="detail-block">
               <h3>프로 성과 요약</h3>
               <dl className="metric-grid compact-metrics">
@@ -4385,6 +4565,85 @@ function CareerPlayerModal({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function ProSeasonStatsTable({ player }: { player: CareerPlayerState }) {
+  const rows = [...(player.proSeasonStats ?? [])].sort((left, right) => right.seasonYear - left.seasonYear);
+  if (rows.length === 0) return <p className="empty">아직 생성된 프로 시즌 기록이 없습니다. 다음 시즌 진행부터 기록이 누적됩니다.</p>;
+  const pitcher = rows[0]?.kind === "pitcher";
+  const activeRows = rows.filter((row) => row.games > 0);
+
+  if (pitcher) {
+    const pitcherRows = rows.filter((row): row is ProPitcherSeasonStats => row.kind === "pitcher");
+    const totals = pitcherRows.reduce((sum, row) => ({
+      games: sum.games + row.games,
+      gamesStarted: sum.gamesStarted + row.gamesStarted,
+      innings: sum.innings + row.innings,
+      wins: sum.wins + row.wins,
+      losses: sum.losses + row.losses,
+      saves: sum.saves + row.saves,
+      holds: sum.holds + row.holds,
+      hitsAllowed: sum.hitsAllowed + row.hitsAllowed,
+      walks: sum.walks + row.walks,
+      strikeouts: sum.strikeouts + row.strikeouts,
+      earnedRuns: sum.earnedRuns + row.earnedRuns,
+      war: sum.war + row.war,
+    }), { games: 0, gamesStarted: 0, innings: 0, wins: 0, losses: 0, saves: 0, holds: 0, hitsAllowed: 0, walks: 0, strikeouts: 0, earnedRuns: 0, war: 0 });
+    const careerEra = totals.innings > 0 ? totals.earnedRuns * 9 / totals.innings : 0;
+    const careerWhip = totals.innings > 0 ? (totals.hitsAllowed + totals.walks) / totals.innings : 0;
+    return (
+      <div className="pro-stats-table-wrap">
+        <table className="pro-stats-table">
+          <thead><tr><th>연도</th><th>팀</th><th>레벨</th><th>나이</th><th>보직</th><th>경기</th><th>선발</th><th>이닝</th><th>승</th><th>패</th><th>세이브</th><th>홀드</th><th>ERA</th><th>WHIP</th><th>탈삼진</th><th>볼넷</th><th>K/9</th><th>BB/9</th><th>WAR</th></tr></thead>
+          <tbody>
+            {pitcherRows.map((row) => (
+              <tr key={`${row.seasonYear}-${row.teamId}`} data-level={row.level}>
+                <td>{row.seasonYear}</td><td>{row.teamName}</td><td>{row.level}</td><td>{row.age}</td><td>{positionLabel(row.position)}</td><td>{row.games}</td><td>{row.gamesStarted}</td><td>{formatDecimal(row.innings, 1)}</td><td>{row.wins}</td><td>{row.losses}</td><td>{row.saves}</td><td>{row.holds}</td><td>{formatDecimal(row.era, 2)}</td><td>{formatDecimal(row.whip, 2)}</td><td>{row.strikeouts}</td><td>{row.walks}</td><td>{formatDecimal(row.strikeoutsPerNine, 2)}</td><td>{formatDecimal(row.walksPerNine, 2)}</td><td>{formatDecimal(row.war, 1)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr><th>통산</th><th colSpan={4}>{activeRows.length}시즌</th><th>{totals.games}</th><th>{totals.gamesStarted}</th><th>{formatDecimal(totals.innings, 1)}</th><th>{totals.wins}</th><th>{totals.losses}</th><th>{totals.saves}</th><th>{totals.holds}</th><th>{formatDecimal(careerEra, 2)}</th><th>{formatDecimal(careerWhip, 2)}</th><th>{totals.strikeouts}</th><th>{totals.walks}</th><th>{formatDecimal(totals.innings > 0 ? totals.strikeouts * 9 / totals.innings : 0, 2)}</th><th>{formatDecimal(totals.innings > 0 ? totals.walks * 9 / totals.innings : 0, 2)}</th><th>{formatDecimal(totals.war, 1)}</th></tr></tfoot>
+        </table>
+      </div>
+    );
+  }
+
+  const hitterRows = rows.filter((row): row is ProHitterSeasonStats => row.kind === "hitter");
+  const totals = hitterRows.reduce((sum, row) => ({
+    games: sum.games + row.games,
+    plateAppearances: sum.plateAppearances + row.plateAppearances,
+    atBats: sum.atBats + row.atBats,
+    runs: sum.runs + row.runs,
+    hits: sum.hits + row.hits,
+    doubles: sum.doubles + row.doubles,
+    triples: sum.triples + row.triples,
+    homeRuns: sum.homeRuns + row.homeRuns,
+    runsBattedIn: sum.runsBattedIn + row.runsBattedIn,
+    walks: sum.walks + row.walks,
+    strikeouts: sum.strikeouts + row.strikeouts,
+    stolenBases: sum.stolenBases + row.stolenBases,
+    caughtStealing: sum.caughtStealing + row.caughtStealing,
+    totalBases: sum.totalBases + Math.round(row.sluggingPercentage * row.atBats),
+    war: sum.war + row.war,
+  }), { games: 0, plateAppearances: 0, atBats: 0, runs: 0, hits: 0, doubles: 0, triples: 0, homeRuns: 0, runsBattedIn: 0, walks: 0, strikeouts: 0, stolenBases: 0, caughtStealing: 0, totalBases: 0, war: 0 });
+  const careerAverage = totals.atBats > 0 ? totals.hits / totals.atBats : 0;
+  const careerOnBase = totals.atBats + totals.walks > 0 ? (totals.hits + totals.walks) / (totals.atBats + totals.walks) : 0;
+  const careerSlugging = totals.atBats > 0 ? totals.totalBases / totals.atBats : 0;
+  return (
+    <div className="pro-stats-table-wrap">
+      <table className="pro-stats-table">
+        <thead><tr><th>연도</th><th>팀</th><th>레벨</th><th>나이</th><th>포지션</th><th>경기</th><th>타석</th><th>타수</th><th>안타</th><th>2루타</th><th>3루타</th><th>홈런</th><th>타점</th><th>득점</th><th>도루</th><th>볼넷</th><th>삼진</th><th>타율</th><th>출루율</th><th>장타율</th><th>OPS</th><th>WAR</th></tr></thead>
+        <tbody>
+          {hitterRows.map((row) => (
+            <tr key={`${row.seasonYear}-${row.teamId}`} data-level={row.level}>
+              <td>{row.seasonYear}</td><td>{row.teamName}</td><td>{row.level}</td><td>{row.age}</td><td>{positionLabel(row.position)}</td><td>{row.games}</td><td>{row.plateAppearances}</td><td>{row.atBats}</td><td>{row.hits}</td><td>{row.doubles}</td><td>{row.triples}</td><td>{row.homeRuns}</td><td>{row.runsBattedIn}</td><td>{row.runs}</td><td>{row.stolenBases}</td><td>{row.walks}</td><td>{row.strikeouts}</td><td>{formatDecimal(row.average, 3)}</td><td>{formatDecimal(row.onBasePercentage, 3)}</td><td>{formatDecimal(row.sluggingPercentage, 3)}</td><td>{formatDecimal(row.ops, 3)}</td><td>{formatDecimal(row.war, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot><tr><th>통산</th><th colSpan={4}>{activeRows.length}시즌</th><th>{totals.games}</th><th>{totals.plateAppearances}</th><th>{totals.atBats}</th><th>{totals.hits}</th><th>{totals.doubles}</th><th>{totals.triples}</th><th>{totals.homeRuns}</th><th>{totals.runsBattedIn}</th><th>{totals.runs}</th><th>{totals.stolenBases}</th><th>{totals.walks}</th><th>{totals.strikeouts}</th><th>{formatDecimal(careerAverage, 3)}</th><th>{formatDecimal(careerOnBase, 3)}</th><th>{formatDecimal(careerSlugging, 3)}</th><th>{formatDecimal(careerOnBase + careerSlugging, 3)}</th><th>{formatDecimal(totals.war, 1)}</th></tr></tfoot>
+      </table>
     </div>
   );
 }
@@ -4552,7 +4811,8 @@ function createScoutLegacySummary(
   records: RecordBreakerRow[],
   years: number,
 ): ScoutLegacySummary {
-  const teamPlayers = team ? players.filter((player) => player.originalTeamId === team.id) : players;
+  const eligiblePlayers = players.filter((player) => !player.preCareerHistory);
+  const teamPlayers = team ? eligiblePlayers.filter((player) => player.originalTeamId === team.id) : eligiblePlayers;
   const starPlayers = teamPlayers.filter((player) => player.currentOverall >= 74 || player.eventKeys.includes("gold-glove") || player.eventKeys.includes("mvp") || player.eventKeys.includes("major-posting"));
   const bestPlayers = [...starPlayers]
     .sort((left, right) => legacyScore(right) - legacyScore(left))
@@ -5230,36 +5490,36 @@ function awardSingleRookieOfYear(
 ) {
   const candidates = players
     .filter((player) => isRookieAwardEligible(player, year))
-    .map((player) => ({
-      player,
-      score:
-        player.currentOverall * 1.2 +
-        (player.debuted ? 10 : 0) +
-        (firstDebutYear(player) === year ? 8 : 0) +
-        (player.eventKeys.includes("rookie-candidate") ? 8 : 0) +
-        (player.pick.round <= 3 ? 4 : 0) +
-        deterministicNoise(`rookie-award-${year}-${player.playerId}`) * 10,
-    }))
+    .map((player) => {
+      const stats = player.proSeasonStats?.find((row) => row.careerYear === year && row.level === "1군");
+      return stats ? { player, stats, score: rookieSeasonScore(stats) + deterministicNoise(`rookie-award-${year}-${player.playerId}`) * 0.35 } : undefined;
+    })
+    .filter((candidate): candidate is { player: CareerPlayerState; stats: ProSeasonStats; score: number } => Boolean(candidate))
     .sort((left, right) => right.score - left.score);
-  const winner = candidates[0]?.player;
-  if (!winner) return;
+  const winnerEntry = candidates[0];
+  if (!winnerEntry) return;
+  const { player: winner, stats } = winnerEntry;
 
   winner.eventKeys = [...winner.eventKeys, "rookie-award"];
-  if (!winner.debuted) {
-    winner.debuted = true;
-    winner.status = "1군";
-  }
   const context = careerContext(winner, userTeamId, watchedIds, nextAfterUserPickIds);
-  addCareerNews(news, winner, year, 5, "신인왕 수상", `${winner.prospect.name}, 신인왕 수상`, "시즌 내내 안정적인 1군 기여를 이어가며 신인왕 투표에서 가장 앞선 평가를 받았다. 올해 신인왕 수상자는 단 한 명으로 기록된다.", context);
+  addCareerNews(news, winner, year, 5, "신인왕 수상", `${winner.prospect.name}, 신인왕 수상`, `${awardStatLine(stats, "신인왕")}. 신인 자격 선수 중 가장 높은 시즌 기여도를 기록해 단 한 명의 수상자로 선정됐다.`, context);
 }
 
 function isRookieAwardEligible(player: CareerPlayerState, year: number): boolean {
   if (player.eventKeys.includes("rookie-award")) return false;
   if (player.status === "방출" || player.status === "은퇴" || player.status === "해외진출") return false;
   if (player.militaryStatus === "serving") return false;
-  const debutYear = firstDebutYear(player);
-  const noPreviousDebut = debutYear === undefined || debutYear === year;
-  return player.yearsPro <= 3 || noPreviousDebut;
+  const current = player.proSeasonStats?.find((stats) => stats.careerYear === year && stats.level === "1군");
+  if (!current || current.games === 0) return false;
+  const previous = (player.proSeasonStats ?? []).filter((stats) => stats.careerYear < year && stats.level === "1군");
+  const previousUsage = previous.reduce((sum, stats) => sum + (stats.kind === "hitter" ? stats.plateAppearances : stats.innings * 3), 0);
+  const rookieLimit = current.kind === "hitter" ? 90 : 100;
+  return previousUsage <= rookieLimit && player.yearsSinceDraft <= 6;
+}
+
+function rookieSeasonScore(stats: ProSeasonStats): number {
+  if (stats.kind === "pitcher") return stats.war * 12 + stats.wins * 0.7 + stats.strikeouts * 0.03 - stats.era * 0.4;
+  return stats.war * 12 + stats.ops * 10 + stats.homeRuns * 0.18 + stats.stolenBases * 0.06;
 }
 
 function firstDebutYear(player: CareerPlayerState): number | undefined {
@@ -5324,6 +5584,7 @@ function addSeasonSelectionHonors(
   watchedIds: Set<ProspectId>,
   nextAfterUserPickIds: Set<ProspectId>,
   news: CareerNewsItem[],
+  seasonResults: TeamSeasonResult[],
 ) {
   const allStars = createAllStarRowsForSeason(seasonYear, year, players, teams, existingPlayers);
   allStars.forEach((row) => {
@@ -5336,7 +5597,7 @@ function addSeasonSelectionHonors(
 
   const tournament = nationalTeamTournamentInfo(seasonYear);
   if (!tournament) return;
-  const nationalTeam = createNationalTeamRowsForSeason(seasonYear, year, players, teams, existingPlayers);
+  const nationalTeam = createNationalTeamRowsForSeason(seasonYear, year, players, teams, existingPlayers, seasonResults, true);
   nationalTeam.forEach((row) => {
     if (!row.playerId) return;
     const player = players.find((candidate) => candidate.playerId === row.playerId);
@@ -5381,17 +5642,24 @@ function allStarDivisionForTeam(teamId: TeamId): "드림" | "나눔" {
   return ["team-jamsil", "team-suwon", "team-incheon", "team-daegu", "team-busan"].includes(teamId) ? "드림" : "나눔";
 }
 
-function nationalTeamTournamentInfo(seasonYear: number): { name: "아시안게임 대표팀" | "WBC 대표팀" | "올림픽 대표팀"; result: string } | undefined {
+type NationalTeamTournamentType = "asian-games" | "wbc" | "olympic";
+
+function nationalTeamTournamentInfo(seasonYear: number): { name: "아시안게임 대표팀" | "WBC 대표팀" | "올림픽 대표팀"; type: NationalTeamTournamentType; result: string } | undefined {
   if (seasonYear < 2026) return undefined;
   const cycle = (seasonYear - 2026) % 4;
-  if (cycle === 0) return { name: "아시안게임 대표팀", result: nationalTeamTournamentResult(seasonYear, "asian-games") };
-  if (cycle === 1) return { name: "WBC 대표팀", result: nationalTeamTournamentResult(seasonYear, "wbc") };
-  if (cycle === 2) return { name: "올림픽 대표팀", result: nationalTeamTournamentResult(seasonYear, "olympic") };
+  if (cycle === 0) return { name: "아시안게임 대표팀", type: "asian-games", result: nationalTeamTournamentResult(seasonYear, "asian-games") };
+  if (cycle === 1) return { name: "WBC 대표팀", type: "wbc", result: nationalTeamTournamentResult(seasonYear, "wbc") };
+  if (cycle === 2) return { name: "올림픽 대표팀", type: "olympic", result: nationalTeamTournamentResult(seasonYear, "olympic") };
   return undefined;
 }
 
-function nationalTeamTournamentResult(seasonYear: number, type: "asian-games" | "wbc" | "olympic"): string {
-  const roll = deterministicNoise(`national-result-${type}-${seasonYear}`);
+function nationalTeamTournamentResult(seasonYear: number, type: NationalTeamTournamentType, rosterStrength?: number): string {
+  const baseRoll = deterministicNoise(`national-result-${type}-${seasonYear}`);
+  const baseline = type === "asian-games" ? 79 : type === "olympic" ? 80 : 81;
+  const strengthAdjustment = rosterStrength === undefined
+    ? 0
+    : clampNumber((rosterStrength - baseline) * 0.012, -0.08, 0.08);
+  const roll = clampNumber(baseRoll + strengthAdjustment, 0, 0.9999);
   if (type === "asian-games") {
     if (roll > 0.42) return "금메달";
     if (roll > 0.24) return "은메달";
@@ -7624,8 +7892,8 @@ function calculateRosterAwareNeed(baseNeed: number, members: RosterMember[], pos
   const depthSurplus = Math.max(0, usableCount - target.usable);
   const qualityPenalty = topAverage > 0 ? clampNumber(target.coreOverall - topAverage, 0, 18) * 1.1 : 18;
   const shortagePenalty = coreShortage * target.coreShortageWeight + depthShortage * target.depthShortageWeight + qualityPenalty;
-  const surplusDiscount = coreSurplus * 5 + depthSurplus * 2.5;
-  return Math.round(clampNumber(baseNeed * 0.55 + shortagePenalty - surplusDiscount, 0, 100));
+  const surplusDiscount = Math.min(10, coreSurplus * 2 + depthSurplus * 0.75);
+  return Math.round(clampNumber(baseNeed * 0.75 + shortagePenalty - surplusDiscount, 5, 100));
 }
 
 function rosterDepthTarget(position: Position): { core: number; usable: number; coreOverall: number; usableOverall: number; coreShortageWeight: number; depthShortageWeight: number } {
@@ -7796,12 +8064,21 @@ function allStarTakeoverMargin(yearsSinceDraft: number): number {
 function createNationalTeamHistoryRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): SelectionHistoryRow[] {
   const seasons = Array.from(new Set(results.map((result) => result.seasonYear))).filter((seasonYear) => Boolean(nationalTeamTournamentInfo(seasonYear))).sort((left, right) => right - left);
   return seasons.flatMap((seasonYear) => {
-    const yearIndex = results.find((result) => result.seasonYear === seasonYear)?.yearIndex ?? 0;
-    return createNationalTeamRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers);
+    const seasonResults = results.filter((result) => result.seasonYear === seasonYear);
+    const yearIndex = seasonResults[0]?.yearIndex ?? 0;
+    return createNationalTeamRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers, seasonResults);
   });
 }
 
-function createNationalTeamRowsForSeason(seasonYear: number, yearIndex: number, players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): SelectionHistoryRow[] {
+function createNationalTeamRowsForSeason(
+  seasonYear: number,
+  yearIndex: number,
+  players: CareerPlayerState[],
+  teams: Team[],
+  existingPlayers: ExistingLeaguePlayer[],
+  seasonResults: TeamSeasonResult[] = [],
+  persistResult = false,
+): SelectionHistoryRow[] {
   const tournament = nationalTeamTournamentInfo(seasonYear);
   if (!tournament) return [];
   const slots = [
@@ -7817,7 +8094,7 @@ function createNationalTeamRowsForSeason(seasonYear: number, yearIndex: number, 
     wildcardsUsed: 0,
     wildcardLimit: 3,
   };
-  return slots
+  const provisionalRows = slots
     .map((slot, index) => {
       const row = selectNationalTeamSlot(seasonYear, yearIndex, tournament.name, tournament.result, slot, index, players, teams, existingPlayers, usedDrafted, usedExisting, context);
       if (!row) return undefined;
@@ -7826,6 +8103,44 @@ function createNationalTeamRowsForSeason(seasonYear: number, yearIndex: number, 
       return row;
     })
     .filter((row): row is SelectionHistoryRow => Boolean(row));
+
+  const storedResult = seasonResults.find((result) => result.nationalTeamResult)?.nationalTeamResult;
+  const rosterStrength = nationalTeamRosterStrength(provisionalRows, players, existingPlayers);
+  const tournamentResult = storedResult ?? nationalTeamTournamentResult(seasonYear, tournament.type, rosterStrength);
+  if (!storedResult && persistResult) {
+    seasonResults.forEach((result) => {
+      result.nationalTeamTournament = tournament.name;
+      result.nationalTeamResult = tournamentResult;
+      result.nationalTeamStrength = rosterStrength;
+    });
+  }
+
+  return provisionalRows.map((row) => ({
+    ...row,
+    group: `${tournament.name} · ${tournamentResult}`,
+    note: row.note.replace(` · ${tournament.result}`, ` · ${tournamentResult}`),
+  }));
+}
+
+function nationalTeamRosterStrength(rows: SelectionHistoryRow[], players: CareerPlayerState[], existingPlayers: ExistingLeaguePlayer[]): number {
+  const overallByDraftedId = new Map(players.map((player) => [player.playerId, player.currentOverall]));
+  const overallByExistingId = new Map(existingPlayers.map((player) => [player.id, player.overall]));
+  const overalls = rows.flatMap((row) => {
+    if (row.playerId) {
+      const overall = overallByDraftedId.get(row.playerId);
+      return overall === undefined ? [] : [overall];
+    }
+    const existingId = row.id.split("-existing-")[1];
+    const overall = existingId ? overallByExistingId.get(existingId) : undefined;
+    return overall === undefined ? [] : [overall];
+  });
+  if (overalls.length === 0) return 80;
+
+  const average = overalls.reduce((sum, overall) => sum + overall, 0) / overalls.length;
+  const topCore = [...overalls].sort((left, right) => right - left).slice(0, Math.min(6, overalls.length));
+  const topCoreAverage = topCore.reduce((sum, overall) => sum + overall, 0) / topCore.length;
+  const missingRosterPenalty = Math.max(0, 24 - overalls.length) * 0.35;
+  return Number(clampNumber(average * 0.82 + topCoreAverage * 0.18 - missingRosterPenalty, 70, 95).toFixed(1));
 }
 
 function selectNationalTeamSlot(
@@ -7980,92 +8295,310 @@ function nationalTeamResultFromNote(note: string): string {
 
 function createYearlyAwardRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): YearlyAwardRow[] {
   const seasons = Array.from(new Set(results.map((result) => result.seasonYear))).sort((left, right) => right - left);
-  const categories = [
-    "골든글러브 투수",
-    "골든글러브 포수",
-    "골든글러브 1루수",
-    "골든글러브 2루수",
-    "골든글러브 3루수",
-    "골든글러브 유격수",
-    "골든글러브 외야수 1",
-    "골든글러브 외야수 2",
-    "골든글러브 외야수 3",
-    "골든글러브 지명타자",
-    "타율왕",
-    "홈런왕",
-    "타점왕",
-    "도루왕",
-    "다승왕",
-    "평균자책점왕",
-    "탈삼진왕",
-    "홀드왕",
-    "세이브왕",
-    "신인왕",
-    "MVP",
-  ];
-
   return seasons.flatMap((seasonYear) => {
-    const yearIndex = results.find((result) => result.seasonYear === seasonYear)?.yearIndex ?? 0;
-    const seasonRows: YearlyAwardRow[] = [];
+    const seasonResults = results.filter((result) => result.seasonYear === seasonYear);
+    const yearIndex = seasonResults[0]?.yearIndex ?? 0;
+    return createAwardRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers, seasonResults);
+  });
+}
 
-    categories.forEach((category, index) => {
-      const rookieAwardRow = category === "신인왕" ? chooseRookieAwardRow(players, teams, seasonYear, yearIndex) : undefined;
-      if (rookieAwardRow) {
-        seasonRows.push(rookieAwardRow);
-        return;
-      }
-      if (category === "신인왕") return;
+type SeasonAwardCandidate = {
+  key: string;
+  teamId: TeamId;
+  playerName: string;
+  playerId?: ProspectId;
+  score: number;
+  note: string;
+};
 
-      const mvpFromGoldGlove = category === "MVP" ? chooseMvpFromGoldGloveRows(seasonRows, players, teams, seasonYear, yearIndex) : undefined;
-      if (mvpFromGoldGlove) {
-        seasonRows.push(mvpFromGoldGlove);
-        return;
-      }
+const GOLD_GLOVE_CATEGORIES = [
+  "골든글러브 투수",
+  "골든글러브 포수",
+  "골든글러브 1루수",
+  "골든글러브 2루수",
+  "골든글러브 3루수",
+  "골든글러브 유격수",
+  "골든글러브 외야수 1",
+  "골든글러브 외야수 2",
+  "골든글러브 외야수 3",
+  "골든글러브 지명타자",
+] as const;
 
-      const excludedDraftedIds = awardedDraftedIdsForCategory(seasonRows, category);
-      const excludedExistingSlots = awardedExistingSlotsForCategory(seasonRows, category);
-      const eligible = players
-        .filter((player) => isDraftedPlayerAwardEligible(player, category, yearIndex))
-        .filter((player) => !excludedDraftedIds.has(player.playerId))
-        .sort((left, right) => awardFitScore(right, category) - awardFitScore(left, category));
-      const existingWinner = selectExistingAwardWinner(existingPlayers, category, seasonYear, index, excludedExistingSlots);
-      const draftedScore = eligible[0] ? awardFitScore(eligible[0], category) : 0;
-      const existingScore = existingWinner ? existingAwardFitScore(existingWinner, category) : 0;
-      const draftedWinner =
-        eligible[0] &&
-        (!existingWinner ||
-          (draftedScore >= existingScore + awardTakeoverMargin(category, yearIndex, eligible[0].yearsSinceDraft) &&
-            deterministicNoise(`${seasonYear}-${category}-${eligible[0].playerId}`) > awardTakeoverThreshold(category, yearIndex)))
-          ? eligible[0]
-          : undefined;
-      if (!draftedWinner && !existingWinner) return;
-      const team = draftedWinner ? teams.find((candidate) => candidate.id === draftedWinner.team.id) : teams.find((candidate) => candidate.id === existingWinner?.teamId);
+const TITLE_CATEGORIES = ["타율왕", "홈런왕", "타점왕", "도루왕", "다승왕", "평균자책점왕", "탈삼진왕", "홀드왕", "세이브왕"] as const;
 
-      if (draftedWinner) {
-        seasonRows.push({
-          id: `award-${seasonYear}-${category}-${index}`,
-          seasonYear,
-          category,
-          teamName: team?.name ?? "-",
-          playerName: draftedWinner.prospect.name,
-          playerId: draftedWinner.playerId,
-          note: `드래프트 출신 · 현재 OVR ${draftedWinner.currentOverall}`,
-        });
-        return;
-      }
+function createAwardRowsForSeason(
+  seasonYear: number,
+  yearIndex: number,
+  players: CareerPlayerState[],
+  teams: Team[],
+  existingPlayers: ExistingLeaguePlayer[],
+  seasonResults: TeamSeasonResult[],
+): YearlyAwardRow[] {
+  const rows: YearlyAwardRow[] = [];
+  const usedGoldGloveKeys = new Set<string>();
+  const usedReliefTitleKeys = new Set<string>();
 
-      if (!existingWinner) return;
+  GOLD_GLOVE_CATEGORIES.forEach((category, index) => {
+    const candidates = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults)
+      .filter((candidate) => !usedGoldGloveKeys.has(candidate.key))
+      .sort((left, right) => right.score - left.score);
+    const winner = candidates[0];
+    if (!winner) return;
+    usedGoldGloveKeys.add(winner.key);
+    rows.push(seasonAwardRow(winner, category, seasonYear, index, teams));
+  });
 
-      seasonRows.push({
-        id: `award-${seasonYear}-${category}-${index}`,
-        seasonYear,
-        category,
-        teamName: team?.name ?? "-",
-        playerName: existingPlayerName(existingWinner),
-        note: existingPlayerNote(yearIndex),
-      });
-    });
-    return seasonRows;
+  TITLE_CATEGORIES.forEach((category, index) => {
+    const winner = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults)
+      .filter((candidate) => !(["홀드왕", "세이브왕"].includes(category) && usedReliefTitleKeys.has(candidate.key)))
+      .sort((left, right) => right.score - left.score)[0];
+    if (!winner) return;
+    rows.push(seasonAwardRow(winner, category, seasonYear, GOLD_GLOVE_CATEGORIES.length + index, teams));
+    if (["홀드왕", "세이브왕"].includes(category)) usedReliefTitleKeys.add(winner.key);
+  });
+
+  const rookie = chooseRookieAwardRow(players, teams, seasonYear, yearIndex);
+  if (rookie) rows.push(rookie);
+
+  const mvpCandidates = createSeasonAwardCandidates("MVP", seasonYear, yearIndex, players, existingPlayers, seasonResults)
+    .map((candidate) => {
+      const goldGloveBonus = rows.some((row) => row.playerName === candidate.playerName && row.teamName === (teams.find((team) => team.id === candidate.teamId)?.name ?? "-") && row.category.startsWith("골든글러브")) ? 8 : 0;
+      const titleBonus = rows.filter((row) => row.playerName === candidate.playerName && TITLE_CATEGORIES.includes(row.category as typeof TITLE_CATEGORIES[number])).length * 3;
+      return { ...candidate, score: candidate.score + goldGloveBonus + titleBonus };
+    })
+    .sort((left, right) => right.score - left.score);
+  if (mvpCandidates[0]) rows.push(seasonAwardRow(mvpCandidates[0], "MVP", seasonYear, 99, teams));
+  return rows;
+}
+
+function seasonAwardRow(candidate: SeasonAwardCandidate, category: string, seasonYear: number, index: number, teams: Team[]): YearlyAwardRow {
+  return {
+    id: `award-${seasonYear}-${category}-${index}-${candidate.key}`,
+    seasonYear,
+    category,
+    teamName: teams.find((team) => team.id === candidate.teamId)?.name ?? "-",
+    playerName: candidate.playerName,
+    playerId: candidate.playerId,
+    note: candidate.note,
+  };
+}
+
+function createSeasonAwardCandidates(
+  category: string,
+  seasonYear: number,
+  yearIndex: number,
+  players: CareerPlayerState[],
+  existingPlayers: ExistingLeaguePlayer[],
+  seasonResults: TeamSeasonResult[],
+): SeasonAwardCandidate[] {
+  const drafted = players.flatMap((player) => {
+    const stats = player.proSeasonStats?.find((row) => row.seasonYear === seasonYear && row.level === "1군");
+    if (!stats) return [];
+    const candidate = draftedAwardCandidate(player, stats, category, seasonResults);
+    return candidate ? [candidate] : [];
+  });
+  const existing = existingPlayers.flatMap((player) => {
+    if (!existingPlayerWasActiveInSeason(player, yearIndex)) return [];
+    const candidate = existingSeasonAwardCandidate(player, category, seasonYear, yearIndex, seasonResults);
+    return candidate ? [candidate] : [];
+  });
+  return [...drafted, ...existing];
+}
+
+function draftedAwardCandidate(player: CareerPlayerState, stats: ProSeasonStats, category: string, results: TeamSeasonResult[]): SeasonAwardCandidate | undefined {
+  const score = awardScoreFromStats(stats, category, player, results);
+  if (score === undefined) return undefined;
+  return {
+    key: `drafted-${player.playerId}`,
+    teamId: stats.teamId,
+    playerName: player.prospect.name,
+    playerId: player.playerId,
+    score,
+    note: `${awardStatLine(stats, category)} · 드래프트 출신`,
+  };
+}
+
+function awardScoreFromStats(stats: ProSeasonStats, category: string, player: CareerPlayerState, results: TeamSeasonResult[]): number | undefined {
+  if (category === "타율왕") return stats.kind === "hitter" && stats.plateAppearances >= 400 ? stats.average : undefined;
+  if (category === "홈런왕") return stats.kind === "hitter" && stats.plateAppearances >= 180 ? stats.homeRuns : undefined;
+  if (category === "타점왕") return stats.kind === "hitter" && stats.plateAppearances >= 180 ? stats.runsBattedIn : undefined;
+  if (category === "도루왕") return stats.kind === "hitter" && stats.plateAppearances >= 150 ? stats.stolenBases : undefined;
+  if (category === "다승왕") return stats.kind === "pitcher" && stats.gamesStarted >= 10 && stats.innings >= 55 ? stats.wins : undefined;
+  if (category === "평균자책점왕") return stats.kind === "pitcher" && stats.gamesStarted >= 18 && stats.innings >= 120 ? -stats.era : undefined;
+  if (category === "탈삼진왕") return stats.kind === "pitcher" && stats.gamesStarted >= 8 && stats.innings >= 55 ? stats.strikeouts : undefined;
+  if (category === "홀드왕") return stats.kind === "pitcher" && stats.games - stats.gamesStarted >= 25 ? stats.holds : undefined;
+  if (category === "세이브왕") return stats.kind === "pitcher" && stats.games - stats.gamesStarted >= 20 ? stats.saves : undefined;
+
+  if (category.startsWith("골든글러브")) {
+    if (!statsMatchesGoldenGloveCategory(stats, category, player)) return undefined;
+    if (stats.kind === "pitcher") return stats.innings >= 80 ? stats.war * 12 - stats.era * 1.4 + stats.wins * 0.45 : undefined;
+    if (stats.games < 65 || stats.plateAppearances < 220) return undefined;
+    const offense = stats.ops * 22 + stats.homeRuns * 0.16 + stats.runsBattedIn * 0.035;
+    const defense = category === "골든글러브 지명타자" ? 0 : stats.fieldingValue * 1.35;
+    return stats.war * 10 + offense + defense;
+  }
+
+  if (category === "MVP") {
+    const result = results.find((candidate) => candidate.teamId === stats.teamId);
+    const teamBonus = result ? Math.max(0, 6 - result.rank) * 0.7 : 0;
+    if (stats.kind === "pitcher") return stats.innings >= 65 ? stats.war * 12 + stats.wins * 0.6 + stats.strikeouts * 0.025 + teamBonus : undefined;
+    return stats.plateAppearances >= 260 ? stats.war * 12 + stats.ops * 12 + stats.homeRuns * 0.12 + stats.stolenBases * 0.04 + teamBonus : undefined;
+  }
+  return undefined;
+}
+
+function statsMatchesGoldenGloveCategory(stats: ProSeasonStats, category: string, player: CareerPlayerState): boolean {
+  if (category === "골든글러브 투수") return stats.kind === "pitcher" && stats.position === "SP";
+  if (stats.kind !== "hitter") return false;
+  if (category === "골든글러브 포수") return stats.position === "C";
+  if (category === "골든글러브 1루수") return stats.position === "1B";
+  if (category === "골든글러브 2루수") return stats.position === "2B";
+  if (category === "골든글러브 3루수") return stats.position === "3B";
+  if (category === "골든글러브 유격수") return stats.position === "SS";
+  if (category.startsWith("골든글러브 외야수")) return ["LF", "CF", "RF"].includes(stats.position);
+  if (category === "골든글러브 지명타자") return player.fieldingRole === "지명타자" || ["1B", "LF", "RF"].includes(stats.position);
+  return false;
+}
+
+function existingPlayerWasActiveInSeason(player: ExistingLeaguePlayer, yearIndex: number): boolean {
+  return yearIndex > 0 && yearIndex <= player.yearsTracked;
+}
+
+function existingSeasonAwardCandidate(
+  player: ExistingLeaguePlayer,
+  category: string,
+  seasonYear: number,
+  yearIndex: number,
+  results: TeamSeasonResult[],
+): SeasonAwardCandidate | undefined {
+  const position = existingAllStarPosition(player);
+  const pitcherCategory = ["다승왕", "평균자책점왕", "탈삼진왕", "홀드왕", "세이브왕", "골든글러브 투수"].includes(category);
+  const hitterCategory = ["타율왕", "홈런왕", "타점왕", "도루왕"].includes(category) || category.startsWith("골든글러브") && category !== "골든글러브 투수";
+  if (pitcherCategory && player.playerGroup !== "pitcher") return undefined;
+  if (hitterCategory && player.playerGroup !== "hitter") return undefined;
+  if (category.startsWith("골든글러브") && !existingMatchesGoldenGloveCategory(position, category)) return undefined;
+  if ((category === "홀드왕" || category === "세이브왕") && position !== "RP") return undefined;
+  if (["다승왕", "평균자책점왕", "탈삼진왕"].includes(category) && position !== "SP") return undefined;
+
+  const yearsAgo = Math.max(0, player.yearsTracked - yearIndex);
+  const estimatedOverall = clampNumber(player.overall + yearsAgo * 0.55, player.overall, player.peakOverall);
+  const noise = deterministicNoise(`existing-stat-${seasonYear}-${category}-${player.id}`);
+  const teamRank = results.find((result) => result.teamId === player.teamId)?.rank ?? 5;
+  const metric = existingAwardMetric(category, estimatedOverall, position, noise, teamRank, player.id);
+  if (!metric) return undefined;
+  return {
+    key: `existing-${player.id}`,
+    teamId: player.teamId,
+    playerName: existingPlayerName(player),
+    score: metric.score,
+    note: `${metric.note} · 기존 선수층`,
+  };
+}
+
+function existingMatchesGoldenGloveCategory(position: Position, category: string): boolean {
+  if (category === "골든글러브 투수") return position === "SP";
+  if (category === "골든글러브 포수") return position === "C";
+  if (category === "골든글러브 1루수") return position === "1B";
+  if (category === "골든글러브 2루수") return position === "2B";
+  if (category === "골든글러브 3루수") return position === "3B";
+  if (category === "골든글러브 유격수") return position === "SS";
+  if (category.startsWith("골든글러브 외야수")) return ["LF", "CF", "RF"].includes(position);
+  return category === "골든글러브 지명타자" && ["1B", "LF", "RF"].includes(position);
+}
+
+function existingAwardMetric(category: string, overall: number, position: Position, noise: number, teamRank: number, profileKey: string): { score: number; note: string } | undefined {
+  const prime = overall - 60;
+  const contactAffinity = deterministicNoise(`${profileKey}-contact-profile`);
+  const powerAffinity = deterministicNoise(`${profileKey}-power-profile`);
+  const speedAffinity = deterministicNoise(`${profileKey}-speed-profile`);
+  if (category === "타율왕") {
+    const value = clampNumber(0.238 + prime * 0.0017 + contactAffinity * 0.045 + noise * 0.012, 0.235, 0.355);
+    return { score: value, note: `타율 ${formatDecimal(value, 3)}` };
+  }
+  if (category === "홈런왕") {
+    const value = Math.round(clampNumber(7 + prime * 0.58 + powerAffinity * 25 + noise * 6, 5, 48));
+    return { score: value, note: `${value}홈런` };
+  }
+  if (category === "타점왕") {
+    const value = Math.round(clampNumber(42 + prime * 1.25 + powerAffinity * 28 + contactAffinity * 16 + noise * 10, 36, 132));
+    return { score: value, note: `${value}타점` };
+  }
+  if (category === "도루왕") {
+    const speedPositionBonus = ["SS", "2B", "CF", "LF", "RF"].includes(position) ? 10 : 0;
+    const value = Math.round(clampNumber(2 + prime * 0.22 + speedPositionBonus + speedAffinity * 27 + noise * 7, 1, 52));
+    return { score: value, note: `${value}도루` };
+  }
+  if (category === "다승왕") {
+    const value = Math.round(clampNumber(6 + prime * 0.48 + Math.max(0, 5 - teamRank) * 0.8 + noise * 4, 4, 22));
+    return { score: value, note: `${value}승` };
+  }
+  if (category === "평균자책점왕") {
+    const value = clampNumber(4.65 - prime * 0.055 - noise * 0.45, 1.65, 5.1);
+    return { score: -value, note: `ERA ${formatDecimal(value, 2)}` };
+  }
+  if (category === "탈삼진왕") {
+    const value = Math.round(clampNumber(85 + prime * 4.3 + noise * 32, 70, 240));
+    return { score: value, note: `${value}탈삼진` };
+  }
+  if (category === "홀드왕") {
+    const value = Math.round(clampNumber(12 + prime * 0.58 + noise * 9, 8, 39));
+    return { score: value, note: `${value}홀드` };
+  }
+  if (category === "세이브왕") {
+    const value = Math.round(clampNumber(17 + prime * 0.82 + noise * 10, 12, 48));
+    return { score: value, note: `${value}세이브` };
+  }
+  const estimatedWar = clampNumber(-0.3 + prime * 0.18 + noise * 1.4, -0.5, 8.5);
+  if (category.startsWith("골든글러브")) return { score: estimatedWar * 10 + overall * 0.22, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}` };
+  if (category === "MVP") return { score: estimatedWar * 12 + Math.max(0, 5 - teamRank) * 0.7, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}` };
+  return undefined;
+}
+
+function awardStatLine(stats: ProSeasonStats, category: string): string {
+  if (stats.kind === "hitter") {
+    if (category === "타율왕") return `타율 ${formatDecimal(stats.average, 3)}`;
+    if (category === "홈런왕") return `${stats.homeRuns}홈런`;
+    if (category === "타점왕") return `${stats.runsBattedIn}타점`;
+    if (category === "도루왕") return `${stats.stolenBases}도루`;
+    return `OPS ${formatDecimal(stats.ops, 3)} · ${stats.homeRuns}홈런 · WAR ${formatDecimal(stats.war, 1)}`;
+  }
+  if (category === "다승왕") return `${stats.wins}승`;
+  if (category === "평균자책점왕") return `ERA ${formatDecimal(stats.era, 2)}`;
+  if (category === "탈삼진왕") return `${stats.strikeouts}탈삼진`;
+  if (category === "홀드왕") return `${stats.holds}홀드`;
+  if (category === "세이브왕") return `${stats.saves}세이브`;
+  return `${stats.wins}승 · ERA ${formatDecimal(stats.era, 2)} · WAR ${formatDecimal(stats.war, 1)}`;
+}
+
+function applySeasonAwardAchievements(
+  players: CareerPlayerState[],
+  rows: YearlyAwardRow[],
+  year: number,
+  userTeamId: TeamId,
+  watchedIds: Set<ProspectId>,
+  nextAfterUserPickIds: Set<ProspectId>,
+  news: CareerNewsItem[],
+): void {
+  rows.filter((row) => row.playerId && row.category !== "신인왕").forEach((row) => {
+    const player = players.find((candidate) => candidate.playerId === row.playerId);
+    if (!player) return;
+    const historyLine = `${row.seasonYear}년 ${row.category} · ${row.note}`;
+    if (player.transactionLog.includes(historyLine)) return;
+    player.transactionLog = [...player.transactionLog, historyLine];
+    const context = careerContext(player, userTeamId, watchedIds, nextAfterUserPickIds);
+    if (row.category.startsWith("골든글러브")) {
+      if (!player.eventKeys.includes("gold-glove")) player.eventKeys = [...player.eventKeys, "gold-glove"];
+      addCareerNews(news, player, year, 5, "골든글러브", `${player.prospect.name}, ${row.category} 수상`, `${row.note}. 실제 시즌 성적과 포지션 수비 기여를 합산한 투표에서 정상에 올랐다.`, context);
+      return;
+    }
+    if (row.category === "MVP") {
+      if (!player.eventKeys.includes("mvp")) player.eventKeys = [...player.eventKeys, "mvp"];
+      addCareerNews(news, player, year, 5, "MVP급 시즌", `${player.prospect.name}, 정규시즌 MVP 수상`, `${row.note}. 리그 전체에서 가장 높은 시즌 기여도를 남겼다.`, context);
+      return;
+    }
+    if (TITLE_CATEGORIES.includes(row.category as typeof TITLE_CATEGORIES[number])) {
+      addCareerNews(news, player, year, 4, "타이틀홀더", `${player.prospect.name}, ${row.category} 등극`, `${row.note}. 해당 부문 리그 1위 기록으로 개인 타이틀을 확정했다.`, context);
+    }
   });
 }
 
@@ -8095,18 +8628,19 @@ function awardedExistingSlotsForCategory(rows: YearlyAwardRow[], category: strin
 function chooseRookieAwardRow(players: CareerPlayerState[], teams: Team[], seasonYear: number, yearIndex: number): YearlyAwardRow | undefined {
   const winner = players
     .filter((player) => player.careerLog.some((entry) => entry.year === yearIndex && entry.type === "신인왕 수상"))
-    .filter((player) => isFirstTeamAwardEligible(player))
-    .sort((left, right) => right.currentOverall - left.currentOverall || left.pick.overall - right.pick.overall)[0];
+    .map((player) => ({ player, stats: player.proSeasonStats?.find((row) => row.seasonYear === seasonYear && row.level === "1군") }))
+    .filter((entry): entry is { player: CareerPlayerState; stats: ProSeasonStats } => Boolean(entry.stats))
+    .sort((left, right) => rookieSeasonScore(right.stats) - rookieSeasonScore(left.stats) || left.player.pick.overall - right.player.pick.overall)[0];
   if (!winner) return undefined;
-  const team = teams.find((candidate) => candidate.id === winner.team.id);
+  const team = teams.find((candidate) => candidate.id === winner.stats.teamId);
   return {
-    id: `award-${seasonYear}-rookie-${winner.playerId}`,
+    id: `award-${seasonYear}-rookie-${winner.player.playerId}`,
     seasonYear,
     category: "신인왕",
-    teamName: team?.name ?? winner.team.name,
-    playerName: winner.prospect.name,
-    playerId: winner.playerId,
-    note: `${winner.pick.round}라운드 ${winner.pick.overall}순위 · 현재 OVR ${winner.currentOverall}`,
+    teamName: team?.name ?? winner.player.team.name,
+    playerName: winner.player.prospect.name,
+    playerId: winner.player.playerId,
+    note: `${awardStatLine(winner.stats, "신인왕")} · ${winner.player.pick.round}라운드 ${winner.player.pick.overall}순위`,
   };
 }
 
@@ -8336,6 +8870,7 @@ function createInitialCareerPlayers(selections: DraftSelectionView[]): CareerPla
     originalTeamId: selection.team.id,
     transactionLog: [`${selection.pick.year}년 ${selection.team.shortName} 지명`],
     militaryStatus: "none",
+    proSeasonStats: [],
   }));
 }
 
@@ -9072,16 +9607,16 @@ function advanceCareerPlayer(
 
   const goldGloveThreshold = next.yearsPro <= 1 ? 90 : next.yearsPro <= 2 ? 86 : next.yearsPro <= 4 ? 82 : 78;
   const goldGloveChance = next.yearsPro <= 1 ? 0.004 : next.yearsPro <= 2 ? 0.01 : next.yearsPro <= 4 ? 0.025 : 0.08;
-  if (next.overall >= goldGloveThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes("gold-glove") && Math.random() < goldGloveChance) {
-    next.eventKeys = [...next.eventKeys, "gold-glove"];
-    addCareerNews(news, next, year, 4, "골든글러브", `${next.prospect.name}, 골든글러브 경쟁권 진입`, "수비와 공격 기여가 동시에 올라오며 리그 정상급 후보로 거론되기 시작했다.", context);
+  if (next.overall >= goldGloveThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes(`gold-glove-contender-${year}`) && Math.random() < goldGloveChance) {
+    next.eventKeys = [...next.eventKeys, `gold-glove-contender-${year}`];
+    addCareerNews(news, next, year, 4, "골든글러브 경쟁", `${next.prospect.name}, 골든글러브 경쟁권 진입`, "수비와 공격 기여가 동시에 올라오며 리그 정상급 후보로 거론되기 시작했다. 실제 수상 여부는 시즌 기록 집계 후 결정된다.", context);
   }
 
   const mvpThreshold = next.yearsPro <= 1 ? 94 : next.yearsPro <= 2 ? 91 : next.yearsPro <= 4 ? 88 : 84;
   const mvpChance = next.yearsPro <= 1 ? 0.0015 : next.yearsPro <= 2 ? 0.004 : next.yearsPro <= 4 ? 0.012 : 0.055;
-  if (next.overall >= mvpThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes("mvp") && Math.random() < mvpChance) {
-    next.eventKeys = [...next.eventKeys, "mvp"];
-    addCareerNews(news, next, year, 5, "MVP급 시즌", `${next.prospect.name}, MVP급 시즌`, "드래프트 당시의 불확실성을 넘어 리그 전체 판도를 흔드는 시즌을 만들고 있다.", context);
+  if (next.overall >= mvpThreshold && isFirstTeamAwardEligible(next) && !next.eventKeys.includes(`mvp-contender-${year}`) && Math.random() < mvpChance) {
+    next.eventKeys = [...next.eventKeys, `mvp-contender-${year}`];
+    addCareerNews(news, next, year, 5, "MVP 경쟁", `${next.prospect.name}, MVP 레이스 진입`, "드래프트 당시의 불확실성을 넘어 리그 전체 판도를 흔드는 시즌을 만들고 있다. 실제 수상 여부는 시즌 기록 집계 후 결정된다.", context);
   }
 
   if (!protectedFromRelease && next.status !== "방출" && next.status !== "은퇴" && next.status !== "해외진출" && Math.random() < agingRetirementChance(next)) {
@@ -9207,6 +9742,296 @@ function createUndraftedNews(year: number, undrafted: Prospect[], watchedIds: Se
         emphasis: watched ? "watched" : undefined,
       };
     });
+}
+
+function simulateProSeasonStats(
+  players: CareerPlayerState[],
+  results: TeamSeasonResult[],
+  existingPlayers: ExistingLeaguePlayer[],
+  seasonYear: number,
+  careerYear: number,
+): CareerPlayerState[] {
+  const nextPlayers = players.map((player) => {
+    const previousStats = (player.proSeasonStats ?? []).filter((stats) => stats.seasonYear !== seasonYear);
+    if (player.status === "해외진출" && !player.debuted) return { ...player, proSeasonStats: previousStats };
+    const stats = player.prospect.playerGroup === "pitcher"
+      ? createPitcherSeasonStats(player, results.find((result) => result.teamId === player.team.id), seasonYear, careerYear)
+      : createHitterSeasonStats(player, seasonYear, careerYear);
+    return { ...player, proSeasonStats: [...previousStats, stats] };
+  });
+
+  results.forEach((result) => {
+    const teamPitchers: Array<{ player: CareerPlayerState; stats: ProPitcherSeasonStats }> = nextPlayers.flatMap((player) => {
+      const stats = latestPitcherStats(player, seasonYear);
+      return player.team.id === result.teamId && stats?.level === "1군" ? [{ player, stats }] : [];
+    });
+    if (teamPitchers.length === 0) return;
+
+    const existingPitchers = existingPlayers.filter((player) => player.teamId === result.teamId && player.status === "active" && player.playerGroup === "pitcher");
+    const draftedWorkload = teamPitchers.reduce((sum, entry) => sum + entry.stats.innings, 0);
+    const existingWorkload = existingPitchers.reduce((sum, player) => sum + Math.max(35, (player.overall - 38) * 3.2), 0);
+    const draftedShare = existingPitchers.length === 0 ? 1 : draftedWorkload / Math.max(1, draftedWorkload + existingWorkload);
+    const visibleWins = Math.min(result.wins, Math.round(result.wins * draftedShare));
+    const visibleLosses = Math.min(result.losses, Math.round(result.losses * draftedShare));
+
+    distributePitcherDecisions(teamPitchers, visibleWins, "wins");
+    distributePitcherDecisions(teamPitchers, visibleLosses, "losses");
+    capTeamPitcherStat(teamPitchers.map((entry) => entry.stats), "saves", result.wins);
+    capTeamPitcherStat(teamPitchers.map((entry) => entry.stats), "holds", Math.floor(result.wins * 1.7));
+  });
+
+  return nextPlayers;
+}
+
+function proSeasonLevel(player: CareerPlayerState): ProSeasonLevel {
+  if (player.militaryStatus === "serving") return "군복무";
+  if (player.status === "1군" || (player.status === "부상" && player.debuted) || (player.status === "해외진출" && player.debuted)) return "1군";
+  if (player.status === "2군") return "퓨처스";
+  return "미출장";
+}
+
+function createHitterSeasonStats(player: CareerPlayerState, seasonYear: number, careerYear: number): ProHitterSeasonStats {
+  const tools = getCareerTools(player);
+  const hitterTools = isPitcherTools(tools) ? initialCareerTools(player.prospect) as HitterDevelopmentTools : tools;
+  const level = proSeasonLevel(player);
+  const key = `${seasonYear}-${player.playerId}-hitter`;
+  const inactive = level === "군복무" || level === "미출장";
+  const firstTeam = level === "1군";
+  const injuryFactor = player.status === "부상" ? 0.48 : 1;
+  const regularBoost = player.eventKeys.includes("first-team-regular") ? 18 : 0;
+  const rookiePhenomenon = player.currentOverall >= 88 && player.prospect.trueTalent.proAdaptation >= 0.84;
+  const draftOpportunity = player.yearsSinceDraft <= 1
+    ? clampNumber(1.03 - (player.pick.round - 1) * 0.075, 0.42, 1)
+    : player.yearsSinceDraft === 2
+      ? clampNumber(1.04 - (player.pick.round - 1) * 0.04, 0.68, 1)
+      : 1;
+  const rookieOpportunityFactor = rookiePhenomenon ? 1 : (player.yearsSinceDraft <= 1 && player.currentOverall < 80 ? 0.78 : player.yearsSinceDraft === 2 ? 0.9 : 1) * draftOpportunity;
+  const maximumGames = firstTeam && player.yearsSinceDraft <= 1 && !rookiePhenomenon ? 118 : firstTeam && player.yearsSinceDraft === 2 ? 132 : firstTeam ? 144 : 128;
+  const games = inactive ? 0 : Math.round(clampNumber(
+    (firstTeam ? 24 + (player.currentOverall - 52) * 3.15 + regularBoost : 58 + (player.currentOverall - 42) * 1.75)
+      * injuryFactor * rookieOpportunityFactor + statNoise(`${key}-games`, -13, 13),
+    firstTeam ? 3 : 18,
+    maximumGames,
+  ));
+  const starterRate = clampNumber(0.25 + (player.currentOverall - 52) / 42 + (player.fieldingRole === "지명타자" ? 0.08 : 0), 0.18, 0.98);
+  const plateAppearances = games === 0 ? 0 : Math.round(games * (firstTeam ? 1.25 + starterRate * 3.05 : 2.3 + starterRate * 1.45));
+  const walkRate = clampNumber(0.035 + hitterTools.discipline * 0.00082 + statNoise(`${key}-bb-rate`, -0.012, 0.012), 0.025, 0.155);
+  const strikeoutRate = clampNumber(0.31 - hitterTools.contact * 0.00145 - hitterTools.discipline * 0.00042 + statNoise(`${key}-k-rate`, -0.025, 0.025), 0.075, 0.36);
+  const walks = Math.round(plateAppearances * walkRate);
+  const hitByPitchAndSacrifice = Math.round(plateAppearances * 0.035);
+  const atBats = Math.max(0, plateAppearances - walks - hitByPitchAndSacrifice);
+  const adaptationPenalty = player.yearsSinceDraft <= 1
+    ? (1 - player.prospect.trueTalent.proAdaptation) * 0.045 + 0.012 + (rookiePhenomenon ? 0 : (player.pick.round - 1) * 0.004)
+    : player.yearsSinceDraft === 2
+      ? (1 - player.prospect.trueTalent.proAdaptation) * 0.022 + (rookiePhenomenon ? 0 : (player.pick.round - 1) * 0.0015)
+      : 0;
+  const competitionAdjustment = firstTeam ? -adaptationPenalty : 0.008;
+  const average = atBats === 0 ? 0 : clampNumber(
+    0.235
+      + (hitterTools.contact - 50) * 0.0019
+      + (player.currentOverall - 50) * 0.00045
+      + (hitterTools.mentality - 50) * 0.00022
+      + statNoise(`${key}-avg`, -0.029, 0.029)
+      + competitionAdjustment,
+    0.12,
+    0.385,
+  );
+  const hits = Math.min(atBats, Math.round(atBats * average));
+  const homeRunRate = clampNumber(-0.012 + hitterTools.power * 0.00078 + statNoise(`${key}-hr-rate`, -0.005, 0.006) - (firstTeam ? adaptationPenalty * 0.12 : 0), 0.001, 0.085);
+  const homeRuns = Math.min(hits, Math.round(atBats * homeRunRate));
+  const doubles = Math.min(Math.max(0, hits - homeRuns), Math.round(hits * clampNumber(0.13 + hitterTools.power * 0.0011, 0.14, 0.27)));
+  const triples = Math.min(Math.max(0, hits - homeRuns - doubles), Math.round(hits * clampNumber((hitterTools.speed - 35) * 0.00032, 0.003, 0.035)));
+  const singles = Math.max(0, hits - doubles - triples - homeRuns);
+  const totalBases = singles + doubles * 2 + triples * 3 + homeRuns * 4;
+  const strikeouts = Math.min(atBats - hits, Math.round(plateAppearances * strikeoutRate));
+  const stolenBaseAttempts = Math.round(plateAppearances * clampNumber((hitterTools.speed - 35) * 0.00072, 0, 0.055));
+  const stolenBaseRate = clampNumber(0.52 + hitterTools.speed * 0.0035, 0.55, 0.88);
+  const stolenBases = Math.round(stolenBaseAttempts * stolenBaseRate);
+  const caughtStealing = Math.max(0, stolenBaseAttempts - stolenBases);
+  const runs = Math.round((hits + walks) * clampNumber(0.22 + hitterTools.speed * 0.003, 0.28, 0.52));
+  const runsBattedIn = Math.round((hits + homeRuns * 2.6) * clampNumber(0.18 + hitterTools.power * 0.0034, 0.28, 0.58));
+  const actualAverage = atBats > 0 ? hits / atBats : 0;
+  const onBasePercentage = plateAppearances > 0 ? (hits + walks) / Math.max(1, atBats + walks + hitByPitchAndSacrifice * 0.45) : 0;
+  const sluggingPercentage = atBats > 0 ? totalBases / atBats : 0;
+  const ops = onBasePercentage + sluggingPercentage;
+  const fieldingValue = roundTo((hitterTools.defense - 50) * games / 720 + statNoise(`${key}-fielding`, -1.8, 1.8), 1);
+  const war = roundTo(clampNumber((ops - (firstTeam ? 0.71 : 0.67)) * plateAppearances / 32 + fieldingValue * 0.12 + (stolenBases - caughtStealing * 1.6) * 0.025, -2.5, 9.5), 1);
+
+  return {
+    kind: "hitter",
+    seasonYear,
+    careerYear,
+    teamId: player.team.id,
+    teamName: player.team.shortName,
+    age: careerAge(player),
+    position: currentPlayerPosition(player),
+    level,
+    games,
+    war,
+    plateAppearances,
+    atBats,
+    runs,
+    hits,
+    doubles,
+    triples,
+    homeRuns,
+    runsBattedIn,
+    walks,
+    strikeouts,
+    stolenBases,
+    caughtStealing,
+    average: roundTo(actualAverage, 3),
+    onBasePercentage: roundTo(onBasePercentage, 3),
+    sluggingPercentage: roundTo(sluggingPercentage, 3),
+    ops: roundTo(ops, 3),
+    fieldingValue,
+  };
+}
+
+function createPitcherSeasonStats(player: CareerPlayerState, teamResult: TeamSeasonResult | undefined, seasonYear: number, careerYear: number): ProPitcherSeasonStats {
+  const tools = getCareerTools(player);
+  const pitcherTools = isPitcherTools(tools) ? tools : initialCareerTools(player.prospect) as PitcherDevelopmentTools;
+  const level = proSeasonLevel(player);
+  const key = `${seasonYear}-${player.playerId}-pitcher`;
+  const inactive = level === "군복무" || level === "미출장";
+  const firstTeam = level === "1군";
+  const injuryFactor = player.status === "부상" ? 0.42 : 1;
+  const rookiePhenomenon = player.currentOverall >= 88 && player.prospect.trueTalent.proAdaptation >= 0.84;
+  const draftOpportunity = player.yearsSinceDraft <= 1
+    ? clampNumber(1.03 - (player.pick.round - 1) * 0.075, 0.42, 1)
+    : player.yearsSinceDraft === 2
+      ? clampNumber(1.04 - (player.pick.round - 1) * 0.04, 0.68, 1)
+      : 1;
+  const rookieOpportunityFactor = rookiePhenomenon ? 1 : (player.yearsSinceDraft <= 1 && player.currentOverall < 80 ? 0.76 : player.yearsSinceDraft === 2 ? 0.9 : 1) * draftOpportunity;
+  const starterGameCap = firstTeam && player.yearsSinceDraft <= 1 && !rookiePhenomenon ? 22 : firstTeam && player.yearsSinceDraft === 2 ? 26 : firstTeam ? 30 : 25;
+  const reliefGameCap = firstTeam && player.yearsSinceDraft <= 1 && !rookiePhenomenon ? 54 : firstTeam && player.yearsSinceDraft === 2 ? 66 : firstTeam ? 78 : 68;
+  const starter = currentPlayerPosition(player) === "SP" && !player.bullpenRole;
+  const gamesStarted = inactive || !starter ? 0 : Math.round(clampNumber(
+    (firstTeam ? 4 + (player.currentOverall - 54) * 0.9 : 11 + (player.currentOverall - 45) * 0.55) * injuryFactor * rookieOpportunityFactor + statNoise(`${key}-gs`, -3, 3),
+    firstTeam ? 0 : 3,
+    starterGameCap,
+  ));
+  const reliefGames = inactive || starter ? 0 : Math.round(clampNumber(
+    (firstTeam ? 14 + (player.currentOverall - 50) * 1.55 : 28 + (player.currentOverall - 43) * 1.25) * injuryFactor * rookieOpportunityFactor + statNoise(`${key}-g`, -7, 8),
+    firstTeam ? 3 : 12,
+    reliefGameCap,
+  ));
+  const games = gamesStarted + reliefGames;
+  const innings = games === 0 ? 0 : roundTo(clampNumber(
+    gamesStarted * clampNumber(3.7 + pitcherTools.stamina * 0.028, 4.1, 6.5) + reliefGames * (player.bullpenRole === "롱맨" ? 1.55 : 0.92),
+    gamesStarted > 0 ? gamesStarted * 3 : reliefGames * 0.45,
+    gamesStarted > 0 ? 205 : 92,
+  ), 1);
+  const command = pitcherTools.command;
+  const stuff = pitcherTools.stuff;
+  const mentality = pitcherTools.mentality;
+  const strikeoutsPerNine = roundTo(clampNumber(3.8 + stuff * 0.07 + pitcherTools.velocity * 0.018 + statNoise(`${key}-k9`, -0.7, 0.7), 3.5, 13.8), 2);
+  const walksPerNine = roundTo(clampNumber(6.1 - command * 0.047 - mentality * 0.008 + statNoise(`${key}-bb9`, -0.45, 0.45), 0.8, 6.8), 2);
+  const adaptationPenalty = player.yearsSinceDraft <= 1
+    ? (1 - player.prospect.trueTalent.proAdaptation) * 1.15 + 0.22 + (rookiePhenomenon ? 0 : (player.pick.round - 1) * 0.09)
+    : player.yearsSinceDraft === 2
+      ? (1 - player.prospect.trueTalent.proAdaptation) * 0.5 + (rookiePhenomenon ? 0 : (player.pick.round - 1) * 0.035)
+      : 0;
+  const eraVolatility = starter ? 0.78 : 1.02;
+  const era = innings === 0 ? 0 : roundTo(clampNumber(
+    4.65
+      - (stuff - 60) * 0.032
+      - (command - 60) * 0.027
+      - (mentality - 60) * 0.01
+      - (player.currentOverall - 60) * 0.012
+      + statNoise(`${key}-era`, -eraVolatility, eraVolatility)
+      + (firstTeam ? 0.15 + adaptationPenalty : -0.42),
+    0.85,
+    10.5,
+  ), 2);
+  const strikeouts = Math.round(innings * strikeoutsPerNine / 9);
+  const walks = Math.round(innings * walksPerNine / 9);
+  const earnedRuns = Math.round(innings * era / 9);
+  const hitsPerNine = clampNumber(12.25 - stuff * 0.055 - command * 0.024 + statNoise(`${key}-h9`, -0.78, 0.78), 4.5, 13.8);
+  const hitsAllowed = Math.round(innings * hitsPerNine / 9);
+  const homeRunsAllowed = Math.round(innings * clampNumber(1.75 - stuff * 0.011 - pitcherTools.velocity * 0.004, 0.35, 1.75) / 9);
+  const whip = innings > 0 ? roundTo((hitsAllowed + walks) / innings, 2) : 0;
+  const saves = firstTeam && player.bullpenRole === "마무리" ? Math.round(clampNumber((teamResult?.wins ?? 65) * 0.46 + statNoise(`${key}-sv`, -5, 5), 0, 48)) : 0;
+  const holds = firstTeam && ["셋업맨", "필승조"].includes(player.bullpenRole ?? "") ? Math.round(clampNumber(11 + (player.currentOverall - 58) * 0.65 + statNoise(`${key}-hold`, -5, 6), 0, 38)) : 0;
+  const war = roundTo(clampNumber(innings * ((4.65 - era) / 4.4) / 28 + (strikeoutsPerNine - walksPerNine - 3.2) * innings / 520, -2.5, 10), 1);
+  const futuresDecisions = level === "퓨처스" ? Math.min(games, Math.round(gamesStarted * 0.62 + reliefGames * 0.14)) : 0;
+  const futuresWinRate = clampNumber(0.58 - (era - 3.8) * 0.055 + statNoise(`${key}-decision`, -0.08, 0.08), 0.28, 0.72);
+  const initialWins = Math.round(futuresDecisions * futuresWinRate);
+  const initialLosses = futuresDecisions - initialWins;
+
+  return {
+    kind: "pitcher",
+    seasonYear,
+    careerYear,
+    teamId: player.team.id,
+    teamName: player.team.shortName,
+    age: careerAge(player),
+    position: currentPlayerPosition(player),
+    level,
+    games,
+    war,
+    gamesStarted,
+    innings,
+    wins: initialWins,
+    losses: initialLosses,
+    saves,
+    holds,
+    hitsAllowed,
+    homeRunsAllowed,
+    walks,
+    strikeouts,
+    earnedRuns,
+    era,
+    whip,
+    strikeoutsPerNine: innings > 0 ? strikeoutsPerNine : 0,
+    walksPerNine: innings > 0 ? walksPerNine : 0,
+  };
+}
+
+function latestPitcherStats(player: CareerPlayerState, seasonYear: number): ProPitcherSeasonStats | undefined {
+  const stats = player.proSeasonStats?.find((row) => row.seasonYear === seasonYear);
+  return stats?.kind === "pitcher" ? stats : undefined;
+}
+
+function distributePitcherDecisions(
+  entries: Array<{ player: CareerPlayerState; stats: ProPitcherSeasonStats }>,
+  target: number,
+  key: "wins" | "losses",
+): void {
+  let remaining = target;
+  while (remaining > 0) {
+    const candidate = entries
+      .filter(({ stats }) => {
+        const decisionCapacity = stats.gamesStarted + Math.floor((stats.games - stats.gamesStarted) * 0.32);
+        return stats.wins + stats.losses < decisionCapacity;
+      })
+      .sort((left, right) => pitcherDecisionWeight(right, key) - pitcherDecisionWeight(left, key))[0];
+    if (!candidate) break;
+    candidate.stats[key] += 1;
+    remaining -= 1;
+  }
+}
+
+function pitcherDecisionWeight(entry: { player: CareerPlayerState; stats: ProPitcherSeasonStats }, key: "wins" | "losses"): number {
+  const { player, stats } = entry;
+  const workload = stats.gamesStarted * 4 + (stats.games - stats.gamesStarted) * 0.42 + stats.innings * 0.08;
+  const performance = key === "wins" ? Math.max(0.4, 6.3 - stats.era) : Math.max(0.4, stats.era - 1.7);
+  const roleFactor = player.bullpenRole === "마무리" ? 0.7 : player.bullpenRole === "패전조" ? (key === "losses" ? 1.25 : 0.55) : 1;
+  return workload * performance * roleFactor / (stats[key] + 1);
+}
+
+function capTeamPitcherStat(stats: ProPitcherSeasonStats[], key: "saves" | "holds", maximum: number): void {
+  let total = stats.reduce((sum, row) => sum + row[key], 0);
+  while (total > maximum) {
+    const row = [...stats].filter((candidate) => candidate[key] > 0).sort((left, right) => right[key] - left[key])[0];
+    if (!row) break;
+    row[key] -= 1;
+    total -= 1;
+  }
+}
+
+function statNoise(key: string, minimum: number, maximum: number): number {
+  return minimum + deterministicNoise(key) * (maximum - minimum);
 }
 
 function simulateTeamSeason(
@@ -9522,6 +10347,60 @@ function mergeStrengthAdjustments(current: Record<string, number>, incoming: Rec
   return next;
 }
 
+function recalibrateEstablishedTeamDepth(teams: Team[], players: CareerPlayerState[]): Team[] {
+  return teams.map((team) => {
+    const activeRoster = players.filter((player) =>
+      player.team.id === team.id &&
+      player.status !== "방출" &&
+      player.status !== "은퇴" &&
+      player.status !== "해외진출",
+    );
+    const positionDepth = Object.fromEntries(POSITIONS.map((position) => {
+      const previous = team.positionDepth[position];
+      const positionPlayers = activeRoster
+        .filter((player) => currentPlayerPosition(player) === position)
+        .sort((left, right) => right.currentOverall - left.currentOverall);
+      const topPlayers = positionPlayers.slice(0, position === "SP" ? 5 : position === "RP" ? 6 : 2);
+      const youngPlayers = positionPlayers.filter((player) => player.yearsSinceDraft <= 4);
+      const topOverall = topPlayers.length > 0
+        ? topPlayers.reduce((sum, player) => sum + player.currentOverall, 0) / topPlayers.length
+        : previous.majorLeagueStrength - 12;
+      const youngQuality = youngPlayers.length > 0
+        ? youngPlayers.reduce((sum, player) => sum + Math.max(player.currentOverall, player.prospect.trueTalent.potential * 0.82), 0) / youngPlayers.length
+        : 35;
+      const averageAge = topPlayers.length > 0
+        ? topPlayers.reduce((sum, player) => sum + careerAge(player), 0) / topPlayers.length
+        : 33;
+      const averageInjuryRisk = topPlayers.length > 0
+        ? topPlayers.reduce((sum, player) => sum + player.prospect.trueTalent.injuryRisk, 0) / topPlayers.length
+        : 0.48;
+      const targetDepth = MIN_POSITION_DEPTH_FOR_CUTS[position];
+      const shortage = Math.max(0, targetDepth - positionPlayers.length);
+      const establishedVeterans = topPlayers.filter((player) => player.yearsSinceDraft >= 7).length;
+      const majorLeagueStrength = Math.round(clampNumber(previous.majorLeagueStrength * 0.28 + (topOverall + 8) * 0.72 - shortage * 2.5, 20, 92));
+      const prospectDepth = Math.round(clampNumber(previous.prospectDepth * 0.25 + (youngQuality + youngPlayers.length * 3) * 0.75 - shortage * 2, 18, 92));
+      const agingRisk = Math.round(clampNumber(14 + Math.max(0, averageAge - 28) * 8 + establishedVeterans * 4, 8, 88));
+      const injuryRisk = Math.round(clampNumber(averageInjuryRisk * 72 + positionPlayers.filter((player) => player.status === "부상").length * 7, 8, 86));
+      const contractRisk = Math.round(clampNumber(10 + establishedVeterans * 13 + topPlayers.filter((player) => player.yearsSinceDraft >= 9).length * 8, 6, 90));
+      const depth: PositionDepth = {
+        ...previous,
+        majorLeagueStrength,
+        prospectDepth,
+        agingRisk,
+        injuryRisk,
+        contractRisk,
+        need: 0,
+      };
+      depth.need = Math.round(clampNumber(calculateNeed(depth) + shortage * 6, 5, 96));
+      return [position, depth];
+    })) as Record<Position, PositionDepth>;
+    const needs = POSITIONS.map((position) => ({ position, urgency: positionDepth[position].need }))
+      .sort((left, right) => right.urgency - left.urgency)
+      .slice(0, 4);
+    return { ...team, positionDepth, needs };
+  });
+}
+
 function updateTeamNeedsAfterSeason(teams: Team[], players: CareerPlayerState[], seasonYear: number): { teams: Team[]; news: CareerNewsItem[] } {
   const news: CareerNewsItem[] = [];
   const updated = teams.map((team) => {
@@ -9673,7 +10552,7 @@ function addCareerNews(
   };
   player.careerLog = [...player.careerLog, logEntry].slice(-30);
   const trackingStatus = player.trackingStatus;
-  const majorType = ["1군 데뷔", "장기 재활", "방출", "은퇴", "신인왕 후보", "신인왕 수상", "골든글러브", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "트레이드", "FA 이적", "메이저 진출", "해외 평가전 활약", "해외 관심", "올스타 선발", "국가대표 선발", "병역 후 파워 상승", "차세대 전력", "베테랑 반등", "기량 저하"].includes(type);
+  const majorType = ["1군 데뷔", "장기 재활", "방출", "은퇴", "신인왕 후보", "신인왕 수상", "골든글러브", "타이틀홀더", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "트레이드", "FA 이적", "메이저 진출", "해외 평가전 활약", "해외 관심", "올스타 선발", "국가대표 선발", "병역 후 파워 상승", "차세대 전력", "베테랑 반등", "기량 저하"].includes(type);
   if (trackingStatus === "summary" && !majorType && importance < 4) return;
   if (trackingStatus === "archived") {
     if (importance < 5 || !["1군 데뷔", "하위 라운드 성공", "MVP급 시즌", "트레이드", "우리 팀이 거른 선수의 성공"].includes(type)) return;
@@ -9736,8 +10615,8 @@ function newsPriority(news: CareerNewsItem): number {
 }
 
 function newsGradeForEvent(type: string, importance: CareerNewsItem["importance"], player: CareerPlayerState): NewsGrade {
-  if (["신인왕 수상", "MVP급 시즌", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "메이저 진출", "해외 평가전 활약", "FA 영입", "트레이드 영입", "국가대표 선발"].includes(type)) return "headline";
-  if (["1군 데뷔", "장기 재활", "방출", "은퇴", "골든글러브", "신인왕 후보", "주요 신인 주목", "차세대 전력", "트레이드", "FA 이적", "해외 관심", "올스타 선발", "병역 후 파워 상승", "베테랑 반등", "기량 저하"].includes(type)) return "major";
+  if (["신인왕 수상", "MVP급 시즌", "타이틀홀더", "하위 라운드 성공", "우리 팀이 거른 선수의 성공", "메이저 진출", "해외 평가전 활약", "FA 영입", "트레이드 영입", "국가대표 선발"].includes(type)) return "headline";
+  if (["1군 데뷔", "장기 재활", "방출", "은퇴", "골든글러브", "골든글러브 경쟁", "MVP 경쟁", "신인왕 후보", "주요 신인 주목", "차세대 전력", "트레이드", "FA 이적", "해외 관심", "올스타 선발", "병역 후 파워 상승", "베테랑 반등", "기량 저하"].includes(type)) return "major";
   if (player.trackingStatus === "archived" || importance <= 2) return "archive";
   if (player.trackingStatus === "summary" && importance <= 3) return "archive";
   return "normal";
@@ -9754,6 +10633,9 @@ function newsSentiment(news: CareerNewsItem): "positive" | "neutral" | "negative
     "주요 신인 주목",
     "신인왕 수상",
     "골든글러브",
+    "골든글러브 경쟁",
+    "타이틀홀더",
+    "MVP 경쟁",
     "MVP급 시즌",
     "하위 라운드 성공",
     "우리 팀이 거른 선수의 성공",
