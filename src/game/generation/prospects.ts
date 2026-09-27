@@ -1792,10 +1792,11 @@ function createHighSchoolIssuePrepLogs(prospect: Prospect, schoolYear: SchoolYea
   return logs;
 }
 
-function createHighSchoolSnapshot(prospect: Pick<Prospect, "schoolYear" | "visible" | "physical" | "hitterStats" | "pitcherStats">, year: number, note: string): HighSchoolYearSnapshot {
+function createHighSchoolSnapshot(prospect: Pick<Prospect, "sourceType" | "collegeYear" | "overseasPath" | "overseasYears" | "school" | "schoolYear" | "visible" | "physical" | "hitterStats" | "pitcherStats">, year: number, note: string): HighSchoolYearSnapshot {
   return {
     year,
     schoolYear: prospect.schoolYear,
+    stageLabel: prospectTrackingStageLabel(prospect),
     publicRank: prospect.visible.publicRank,
     scoutGrade: prospect.visible.scoutGrade,
     confidence: prospect.visible.confidence,
@@ -1806,6 +1807,12 @@ function createHighSchoolSnapshot(prospect: Pick<Prospect, "schoolYear" | "visib
     hitterStats: prospect.hitterStats,
     pitcherStats: prospect.pitcherStats,
   };
+}
+
+function prospectTrackingStageLabel(prospect: Pick<Prospect, "sourceType" | "collegeYear" | "overseasPath" | "overseasYears" | "school" | "schoolYear">): string {
+  if (prospect.sourceType === "college") return `${prospect.school} ${prospect.collegeYear ?? "-"}학년`;
+  if (prospect.sourceType === "overseas-returnee") return `${overseasPathLabel(prospect.overseasPath)} ${prospect.overseasYears ?? "-"}년차`;
+  return `${prospect.schoolYear}학년`;
 }
 
 function createInitialHighSchoolLog(prospect: Prospect, year: number): HighSchoolCareerLogEntry {
@@ -2085,6 +2092,7 @@ function maybeApplyMlbDirectEvent(rng: Rng, prospect: Prospect, year: number): P
       {
         year,
         schoolYear: withAccolade.schoolYear,
+        stageLabel: prospectTrackingStageLabel(withAccolade),
         type: "showcase",
         headline: signed ? `${withAccolade.name}, MLB 직행 계약` : `${withAccolade.name}, MLB 구단 관심 확인`,
         body: signed
@@ -2134,6 +2142,7 @@ function maybeApplyReputationRiskEvent(rng: Rng, prospect: Prospect, year: numbe
       {
         year,
         schoolYear: prospect.schoolYear,
+        stageLabel: prospectTrackingStageLabel(prospect),
         type: "reputation-risk",
         headline: `${prospect.name}, 학교생활 논란으로 여론 변수`,
         body: "인지도는 크게 올랐지만 팬 여론과 구단 평판 리스크 평가에는 감점 요인으로 남았다.",
@@ -2175,6 +2184,7 @@ function applyAccoladesToProspect(prospect: Prospect, quotaAccolades: ProspectAc
       ...quotaAccolades.map((accolade): HighSchoolCareerLogEntry => ({
         year,
         schoolYear: prospect.schoolYear,
+        stageLabel: prospectTrackingStageLabel(prospect),
         type: accolade.id === "u18-national" ? "national-team" : accolade.id === "college-hs-allstar" ? "showcase" : "accolade",
         headline: `${prospect.name}, ${accolade.label}`,
         body: accolade.meaning,
