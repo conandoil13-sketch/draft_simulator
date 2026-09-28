@@ -5,6 +5,9 @@ export type ProspectId = Brand<string, "ProspectId">;
 export type PlayerId = Brand<string, "PlayerId">;
 export type DraftPickId = Brand<string, "DraftPickId">;
 export type NewsId = Brand<string, "NewsId">;
+export type ForeignPlayerId = Brand<string, "ForeignPlayerId">;
+export type ForeignContractId = Brand<string, "ForeignContractId">;
+export type ForeignOfferId = Brand<string, "ForeignOfferId">;
 
 export type GamePhase =
   | "team-selection"

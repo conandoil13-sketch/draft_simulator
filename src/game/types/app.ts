@@ -8,7 +8,7 @@ import type { Team } from "./team";
 export type SortDirection = "asc" | "desc";
 export type PlayerTypeFilter = "all" | "hitters" | "pitchers";
 export type DraftPhase = "team-selection" | "generating" | "pre-draft" | "draft" | "complete";
-export type MainTab = "draft-room" | "scouting" | "team" | "review" | "tracking" | "league-history";
+export type MainTab = "draft-room" | "foreign-recruitment" | "scouting" | "team" | "review" | "tracking" | "league-history";
 export type LeagueHistorySubTab = "current" | "operations" | "narrative";
 export type NewsViewMode = "timeline" | "player";
 export type NewsScope = "user-team" | "watched" | "league";

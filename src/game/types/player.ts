@@ -262,6 +262,8 @@ export type ProspectSourceType = "high-school" | "college" | "overseas-returnee"
 
 export type Prospect = {
   id: ProspectId;
+  /** Hidden cohort marker. Public high-school-special status is revealed separately. */
+  eliteTrajectory?: boolean;
   sourceType?: ProspectSourceType;
   collegeProgramType?: "two-year" | "four-year";
   collegeYear?: 2 | 4;

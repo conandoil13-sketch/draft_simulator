@@ -2,6 +2,7 @@ import { createInitialStandings, createVariedInitialTeams, DEFAULT_GAME_SETTINGS
 import { createDraftOrder } from "../draft/draftOrder";
 import { createSeededRng } from "../generation/random";
 import { generateHighSchoolPlayerPoolWithSchools } from "../generation/prospects";
+import { generateForeignPlayerMarket } from "../generation/foreignPlayers";
 import type { TeamId } from "../types/common";
 import type { GameState } from "../types/game";
 
@@ -22,6 +23,7 @@ export function createNewGame(seed = String(Date.now()), options: NewGameOptions
     strengthSnapshot: teams.find((team) => team.id === standing.teamId)?.currentStrength ?? 50,
   }));
   const { prospects, schools, classQuality } = generateHighSchoolPlayerPoolWithSchools(rng, currentYear, DEFAULT_GAME_SETTINGS.prospectsPerYear);
+  const foreignPlayers = generateForeignPlayerMarket(rng, currentYear);
   const draftEligibleProspects = prospects.filter((prospect) => prospect.draftEligibleYear === currentYear);
   const picks = createDraftOrder(currentYear, teams, initialStandings, DEFAULT_GAME_SETTINGS.rounds);
 
@@ -35,6 +37,14 @@ export function createNewGame(seed = String(Date.now()), options: NewGameOptions
     teams,
     schoolsById: Object.fromEntries(schools.map((school) => [school.id, school])),
     prospectsById: Object.fromEntries(prospects.map((prospect) => [prospect.id, prospect])),
+    foreignPlayerMarketYear: currentYear,
+    foreignPlayersById: Object.fromEntries(foreignPlayers.map((player) => [player.id, player])),
+    foreignContractsById: {},
+    foreignContractOffersById: {},
+    foreignRecruitmentByYear: {},
+    foreignRecruitmentDecisionsByYear: {},
+    foreignRosterDecisionsByYear: {},
+    foreignShortlistIds: [],
     draftClassProfilesByYear: {
       [currentYear]: classQuality,
     },

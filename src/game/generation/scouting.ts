@@ -88,18 +88,22 @@ export function createVisibleScoutingReport(
   const reputation = context.reputation ?? 0;
   const awardCount = context.accolades?.length ?? 0;
   const visibleOverall = clamp(talent.currentAbility + reputation * 0.08 + hype * 0.1 + randomInt(rng, -uncertainty, uncertainty), 20, 80);
-  const hypeRoundBoost = publicRank <= 100 ? Math.floor(hype / 42) : Math.floor(hype / 58);
-  const projectedRoundCenter = clamp(projectedRoundFromRank(publicRank) - hypeRoundBoost, 1, 11);
+  const reportConfidence = clamp(confidence + awardCount * 0.03, 0.2, 0.96);
+  const hypeRoundBoost = publicRank <= 20 ? 0 : publicRank <= 100 ? Math.floor(hype / 42) : Math.floor(hype / 58);
+  const projectedRoundExpansion = createProjectedRoundExpansion(rng, dataTier, reportConfidence);
+  const projectedRound = expandProjectedRound(
+    shiftProjectedRoundEarlier(projectedRoundFromRank(publicRank), hypeRoundBoost),
+    projectedRoundExpansion,
+  );
   const interestCountBoost = Math.min(3, Math.floor((reputation + hype) / 32));
-  const width = projectedRoundWidth(dataTier);
 
   return {
     dataTier,
     visibility,
     publicRank,
     scoutGrade: gradeFromVisibleOverall(visibleOverall, publicRank),
-    confidence: clamp(confidence + awardCount * 0.03, 0.2, 0.96),
-    projectedRound: toRange(projectedRoundCenter, width, 1, 11),
+    confidence: reportConfidence,
+    projectedRound,
     expectedOverallRange: toRange(visibleOverall, uncertainty, 20, 80),
     trend: pickOne(rng, ["rising", "steady", "falling"]),
     tools: {},
@@ -334,21 +338,62 @@ function createSummary(tier: ProspectDataTier, context: ScoutingContext): string
   return `제한 리포트. ${contextText}신체조건 ${context.physical.heightCm}㎝/${context.physical.weightKg}㎏, 포지션과 짧은 기록 표본을 중심으로 추적 중이다.`;
 }
 
-function projectedRoundFromRank(publicRank: number): number {
-  if (publicRank <= 40) return clamp(Math.ceil(publicRank / 20), 1, 2);
-  if (publicRank <= 80) return clamp(2 + Math.ceil((publicRank - 40) / 14), 3, 5);
-  if (publicRank <= 100) return clamp(6 + Math.ceil((publicRank - 80) / 10), 6, 8);
-  if (publicRank <= 140) return clamp(8 + Math.ceil((publicRank - 100) / 20), 9, 10);
-  if (publicRank <= 220) return 11;
-  return 11;
+function projectedRoundFromRank(publicRank: number): { min: number; max: number } {
+  if (publicRank <= 20) return { min: 1, max: 2 };
+  if (publicRank <= 40) return { min: 2, max: 4 };
+  if (publicRank <= 60) return { min: 3, max: 5 };
+  if (publicRank <= 80) return { min: 4, max: 7 };
+  if (publicRank <= 100) return { min: 6, max: 9 };
+  if (publicRank <= 140) return { min: 8, max: 10 };
+  if (publicRank <= 180) return { min: 9, max: 11 };
+  return { min: 11, max: 11 };
 }
 
-function projectedRoundWidth(tier: ProspectDataTier): number {
-  if (tier === "top-40") return 0;
-  if (tier === "rank-41-100") return 1;
-  if (tier === "rank-101-180") return 1;
-  if (tier === "rank-181-260") return 2;
-  return 1;
+function shiftProjectedRoundEarlier(projectedRound: { min: number; max: number }, boost: number): { min: number; max: number } {
+  if (boost <= 0) return projectedRound;
+  return {
+    min: clamp(projectedRound.min - boost, 1, 11),
+    max: clamp(projectedRound.max - boost, 1, 11),
+  };
+}
+
+function expandProjectedRound(
+  projectedRound: { min: number; max: number },
+  expansion: { earlier: number; later: number },
+): { min: number; max: number } {
+  return {
+    min: clamp(projectedRound.min - expansion.earlier, 1, 11),
+    max: clamp(projectedRound.max + expansion.later, 1, 11),
+  };
+}
+
+function createProjectedRoundExpansion(
+  rng: Rng,
+  tier: ProspectDataTier,
+  confidence: number,
+): { earlier: number; later: number } {
+  const tierUncertainty =
+    tier === "top-40"
+      ? 0.28
+      : tier === "rank-41-100"
+        ? 0.46
+        : tier === "rank-101-180"
+          ? 0.64
+          : tier === "rank-181-260"
+            ? 0.78
+            : 0.7;
+  const uncertainty = clamp(tierUncertainty + (0.72 - confidence) * 0.7, 0.16, 0.94);
+  const maxExpansion = tier === "rank-261-360" ? 2 : 3;
+  let earlier = rng.next() < uncertainty ? randomInt(rng, 0, maxExpansion) : 0;
+  let later = rng.next() < uncertainty + 0.08 ? randomInt(rng, 0, maxExpansion) : 0;
+
+  // A minority of divided evaluations should look visibly broad, such as 1~5R or 3~7R.
+  if (rng.next() < uncertainty * 0.3) {
+    if (rng.next() < 0.58) later = Math.max(later, 2);
+    else earlier = Math.max(earlier, 2);
+  }
+
+  return { earlier, later };
 }
 
 function teamInterestForTier(rng: Rng, tier: ProspectDataTier, boost: number): string[] {

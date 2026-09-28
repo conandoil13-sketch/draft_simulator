@@ -104,6 +104,8 @@ function compactGameStateForSave(game: GameState): GameState {
     draftClassesByYear: {
       [game.currentYear]: game.draftClassesByYear[game.currentYear] ?? (Object.keys(game.prospectsById) as ProspectId[]),
     },
+    foreignPlayerMarketYear: game.foreignPlayerMarketYear,
+    foreignPlayersById: game.foreignPlayerMarketYear === game.currentYear ? game.foreignPlayersById : {},
     draftPicksByYear: {
       [game.currentYear]: currentPicks,
     },

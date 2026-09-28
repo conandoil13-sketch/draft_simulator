@@ -27,11 +27,19 @@ import {
 import { createVariedInitialTeams } from "./game/constants/league";
 import { createNewGame } from "./game/simulation/gameLoop";
 import { advanceHighSchoolPlayerPool } from "./game/generation/prospects";
+import { effectiveForeignOverall, generateForeignPlayerMarket } from "./game/generation/foreignPlayers";
 import { createSeededRng } from "./game/generation/random";
+import { generateCpuForeignOffers } from "./game/foreign/offerAi";
+import { rolloverForeignPlayerMarket } from "./game/foreign/market";
+import { advanceForeignRecruitmentState, createForeignContractOffer, createForeignRecruitmentState, resolveForeignRecruitmentRound } from "./game/foreign/recruitment";
+import { resolveForeignRosterDecisions, simulateForeignContractSeasons } from "./game/foreign/season";
+import { getActiveForeignContracts, getForeignRosterUsage, validateForeignRosterSigning } from "./game/selectors/foreignContracts";
 import { clearSaveState, compactSaveState, JSON_SAVE_FILENAME, readSaveState, writeSaveState } from "./game/storage/saveState";
 import { reportReliabilityPercent, roundGrade, roundTo } from "./game/utils/math";
-import type { DraftPickId, Position, ProspectId, TeamId } from "./game/types/common";
+import type { DraftPickId, ForeignPlayerId, Position, ProspectId, TeamId } from "./game/types/common";
 import type { DraftPick } from "./game/types/draft";
+import type { ForeignContract, ForeignContractTerms, ForeignGuaranteedRole, ForeignRetentionRecommendation, ForeignRosterDecisionType } from "./game/types/foreignContract";
+import type { ForeignOriginLeague, ForeignPlayerCandidate, ForeignPlayerGroup, ForeignPlayerSlot, ForeignRecentStats } from "./game/types/foreignPlayer";
 import type { GameState } from "./game/types/game";
 import type { DevelopmentTools, HighSchoolYearSnapshot, HitterDevelopmentTools, HitterStats, LeagueLevel, PitcherDevelopmentTools, PitcherStats, Prospect, ProspectRiskTag, ProspectSourceType, SchoolYear, ScoutGrade, SeasonFormCycle } from "./game/types/player";
 import type { SchoolDevelopmentBias, SchoolProfile, SchoolRegion, SchoolTier, SchoolTrait } from "./game/types/school";
@@ -95,6 +103,12 @@ type SaveFileHandle = {
   }>;
 };
 
+type ScoutingSubTab = "domestic" | "foreign";
+type ForeignSortKey = "name" | "age" | "adaptation" | "salary" | "risk";
+type ForeignCareerTotals =
+  | { kind: "pitcher"; games: number; wins: number; losses: number; saves: number; holds: number; innings: number; era: number; whip: number; strikeouts: number; walks: number; strikeoutsPerNine: number; walksPerNine: number; maxVelocityKph: number }
+  | { kind: "hitter"; games: number; plateAppearances: number; atBats: number; hits: number; doubles: number; triples: number; homeRuns: number; runsBattedIn: number; stolenBases: number; average: number; onBasePercentage: number; sluggingPercentage: number; ops: number; strikeoutRate: number; walkRate: number };
+
 declare global {
   interface Window {
     showSaveFilePicker?: (options?: {
@@ -112,6 +126,36 @@ const SOURCE_TYPE_LABELS: Record<ProspectSourceType | "all", string> = {
   "high-school": "고교",
   college: "대학",
   "overseas-returnee": "해외 복귀",
+};
+
+const FOREIGN_NATIONALITY_LABELS: Record<string, string> = {
+  USA: "미국",
+  "Dominican Republic": "도미니카공화국",
+  Venezuela: "베네수엘라",
+  Mexico: "멕시코",
+  Cuba: "쿠바",
+  "Puerto Rico": "푸에르토리코",
+  Canada: "캐나다",
+  Panama: "파나마",
+  Japan: "일본",
+  Taiwan: "대만",
+  Australia: "호주",
+  Philippines: "필리핀",
+  China: "중국",
+};
+
+const FOREIGN_LEAGUE_LABELS: Partial<Record<ForeignOriginLeague, string>> = {
+  MLB: "MLB",
+  AAA: "트리플A",
+  AA: "더블A",
+  MiLB: "마이너리그",
+  "Mexican League": "멕시칸리그",
+  Independent: "독립리그",
+  NPB: "NPB 1군",
+  "NPB Futures": "NPB 2군",
+  "Japanese Industrial": "일본 실업리그",
+  CPBL: "CPBL",
+  ABL: "호주리그",
 };
 
 const STAT_CAREER_LOG_TYPES = new Set([
@@ -200,6 +244,30 @@ function createRandomSeed(): string {
   return `${Date.now()}-${Array.from(values).join("-")}`;
 }
 
+function ensureForeignPlayerMarket(game: GameState | undefined): GameState | undefined {
+  if (!game) return game;
+  const existingMarket = Object.values(game?.foreignPlayersById ?? {});
+  const playerById = new Map(existingMarket.map((player) => [player.id, player]));
+  let contractsChanged = false;
+  const hydratedContracts = Object.fromEntries(Object.entries(game.foreignContractsById ?? {}).map(([id, contract]) => {
+    const snapshot = contract.playerSnapshot ?? playerById.get(contract.playerId);
+    if (!contract.playerSnapshot && snapshot) contractsChanged = true;
+    return [id, snapshot ? { ...contract, playerSnapshot: snapshot } : contract];
+  }));
+  if (game.foreignPlayerMarketYear === game.currentYear
+    && existingMarket.length > 0
+    && existingMarket.every((player) => player.careerHistory?.length > 0 && (player.generationVersion ?? 0) >= 3)) {
+    return contractsChanged ? { ...game, foreignContractsById: hydratedContracts } : game;
+  }
+  const market = rolloverForeignPlayerMarket(existingMarket, Object.values(hydratedContracts), game.currentYear, createSeededRng(`${game.seed}-foreign-market-${game.currentYear}`));
+  return {
+    ...game,
+    foreignPlayerMarketYear: game.currentYear,
+    foreignPlayersById: Object.fromEntries(market.map((player) => [player.id, player])),
+    foreignContractsById: hydratedContracts,
+  };
+}
+
 function App() {
   const savedAtBoot = useMemo(() => readSaveState(), []);
   const [hasSavedCareer, setHasSavedCareer] = useState(Boolean(savedAtBoot));
@@ -216,6 +284,7 @@ function App() {
   const pregameTeams = useMemo(() => createVariedInitialTeams(createSeededRng(pregameSeed)), [pregameSeed]);
   const teams = dynamicTeams.length > 0 ? dynamicTeams : game?.teams ?? pregameTeams;
   const prospects = useMemo(() => (game ? Object.values(game.prospectsById) : []), [game]);
+  const foreignPlayers = useMemo(() => (game ? Object.values(game.foreignPlayersById ?? {}) : []), [game]);
   const schoolProfiles = useMemo(() => (game ? Object.values(game.schoolsById) : []), [game]);
   const draftPicks = useMemo(() => (game ? game.draftPicksByYear[game.currentYear] : []), [game]);
   const displayDraftYear = draftPicks[0]?.year ?? game?.currentYear ?? 2026;
@@ -227,6 +296,7 @@ function App() {
 
   const [phase, setPhase] = useState<DraftPhase>("team-selection");
   const [activeTab, setActiveTab] = useState<MainTab>("draft-room");
+  const [scoutingSubTab, setScoutingSubTab] = useState<ScoutingSubTab>("domestic");
   const [userTeamId, setUserTeamId] = useState<TeamId | undefined>();
   const [initialRank, setInitialRank] = useState<number | "random">("random");
   const [selections, setSelections] = useState<DraftSelectionView[]>([]);
@@ -247,6 +317,16 @@ function App() {
   const [leagueFilter, setLeagueFilter] = useState<LeagueLevel | "all">("all");
   const [accoladeFilter, setAccoladeFilter] = useState<string>("all");
   const [activePreset, setActivePreset] = useState<FilterPreset | "none">("none");
+  const [foreignSlotFilter, setForeignSlotFilter] = useState<ForeignPlayerSlot | "all">("all");
+  const [foreignGroupFilter, setForeignGroupFilter] = useState<ForeignPlayerGroup | "all">("all");
+  const [foreignNationalityFilter, setForeignNationalityFilter] = useState("all");
+  const [foreignLeagueFilter, setForeignLeagueFilter] = useState<ForeignOriginLeague | "all">("all");
+  const [foreignSortKey, setForeignSortKey] = useState<ForeignSortKey>("salary");
+  const [foreignSortDirection, setForeignSortDirection] = useState<SortDirection>("desc");
+  const [foreignOfferPlayerId, setForeignOfferPlayerId] = useState<ForeignPlayerId | "">("");
+  const [foreignOfferSalary, setForeignOfferSalary] = useState(300000);
+  const [foreignOfferYears, setForeignOfferYears] = useState(1);
+  const [foreignOfferRole, setForeignOfferRole] = useState<ForeignGuaranteedRole>("starting-pitcher");
   const [favorites, setFavorites] = useState(() => readStoredSet("draft-sm:favorites"));
   const [compareIds, setCompareIds] = useState<Set<string>>(() => readStoredSet("draft-sm:compare"));
   const [bigBoardIds, setBigBoardIds] = useState<string[]>(() => Array.from(readStoredSet("draft-sm:bigboard")));
@@ -282,6 +362,7 @@ function App() {
   const [careerYearBucket, setCareerYearBucket] = useState<CareerYearBucket>("all");
   const [detailPlayerId, setDetailPlayerId] = useState<ProspectId | "">("");
   const [prospectDetailId, setProspectDetailId] = useState<ProspectId | "">("");
+  const [foreignPlayerDetailId, setForeignPlayerDetailId] = useState("");
   const [draftPickToast, setDraftPickToast] = useState<DraftSelectionView | undefined>();
   const [isPickSequenceRunning, setIsPickSequenceRunning] = useState(false);
 
@@ -291,6 +372,15 @@ function App() {
   const draftEligibleProspects = useMemo(() => prospects.filter((prospect) => isDraftEligibleProspect(prospect, displayDraftYear)), [displayDraftYear, prospects]);
   const selected = prospects.find((prospect) => prospect.id === selectedId) ?? draftEligibleProspects[0] ?? prospects[0];
   const prospectDetail = prospectDetailId ? prospects.find((prospect) => prospect.id === prospectDetailId) : undefined;
+  const foreignPlayerDetail = foreignPlayerDetailId
+    ? foreignPlayers.find((player) => player.id === foreignPlayerDetailId)
+      ?? Object.values(game?.foreignContractsById ?? {}).find((contract) => contract.playerId === foreignPlayerDetailId)?.playerSnapshot
+    : undefined;
+  const foreignPlayerDetailContract = foreignPlayerDetailId
+    ? Object.values(game?.foreignContractsById ?? {})
+      .filter((contract) => contract.playerId === foreignPlayerDetailId)
+      .sort((left, right) => right.startYear - left.startYear)[0]
+    : undefined;
   const selectedDrafted = selected ? selections.some((selection) => selection.prospect.id === selected.id) : false;
   const draftedIds = useMemo(() => new Set(selections.map((selection) => selection.prospect.id)), [selections]);
   const availableProspects = useMemo(() => prospects.filter((prospect) => !draftedIds.has(prospect.id)), [draftedIds, prospects]);
@@ -323,6 +413,29 @@ function App() {
       })
       .sort((a, b) => compareBySortKey(a, b, sortKey, sortDirection));
   }, [accoladeFilter, activePreset, displayDraftYear, favoriteOnly, favorites, leagueFilter, playerTypeFilter, positionFilter, regionFilter, riskFilter, roundFilter, schoolFilter, schoolTierFilter, schoolYearFilter, selectedTeam, sortDirection, sortKey, sourceTypeFilter, tableProspects]);
+
+  const foreignNationalities = useMemo(() => Array.from(new Set(foreignPlayers.map((player) => player.nationality))).sort(), [foreignPlayers]);
+  const foreignLeagues = useMemo(() => Array.from(new Set(foreignPlayers.map((player) => player.formerLeague))).sort(), [foreignPlayers]);
+  const foreignMarketYear = game?.foreignPlayerMarketYear ?? displayDraftYear;
+  const foreignContracts = useMemo(() => Object.values(game?.foreignContractsById ?? {}), [game?.foreignContractsById]);
+  const foreignOffers = useMemo(() => Object.values(game?.foreignContractOffersById ?? {}), [game?.foreignContractOffersById]);
+  const foreignRecruitment = game?.foreignRecruitmentByYear?.[foreignMarketYear];
+  const foreignDecisions = game?.foreignRecruitmentDecisionsByYear?.[foreignMarketYear] ?? [];
+  const foreignRosterDecisionYears = Object.keys(game?.foreignRosterDecisionsByYear ?? {}).map(Number).sort((left, right) => right - left);
+  const latestForeignRosterDecisionYear = foreignRosterDecisionYears[0];
+  const latestForeignRosterDecisions = latestForeignRosterDecisionYear ? game?.foreignRosterDecisionsByYear?.[latestForeignRosterDecisionYear] ?? [] : [];
+  const foreignShortlist = useMemo(() => (game?.foreignShortlistIds ?? [])
+    .map((id) => foreignPlayers.find((player) => player.id === id))
+    .filter((player): player is ForeignPlayerCandidate => Boolean(player)), [foreignPlayers, game?.foreignShortlistIds]);
+  const selectedForeignOfferPlayer = foreignOfferPlayerId ? foreignPlayers.find((player) => player.id === foreignOfferPlayerId) : undefined;
+  const userForeignContracts = userTeamId ? getActiveForeignContracts(foreignContracts, userTeamId, foreignMarketYear) : [];
+  const userForeignUsage = userTeamId ? getForeignRosterUsage(foreignContracts, userTeamId, foreignMarketYear) : undefined;
+  const visibleForeignPlayers = useMemo(() => foreignPlayers
+    .filter((player) => foreignSlotFilter === "all" || player.slotType === foreignSlotFilter)
+    .filter((player) => foreignGroupFilter === "all" || player.playerGroup === foreignGroupFilter)
+    .filter((player) => foreignNationalityFilter === "all" || player.nationality === foreignNationalityFilter)
+    .filter((player) => foreignLeagueFilter === "all" || player.formerLeague === foreignLeagueFilter)
+    .sort((left, right) => compareForeignPlayers(left, right, foreignSortKey, foreignSortDirection)), [foreignGroupFilter, foreignLeagueFilter, foreignNationalityFilter, foreignPlayers, foreignSlotFilter, foreignSortDirection, foreignSortKey]);
 
   const userSelections = selections.filter((selection) => selection.team.id === userTeamId);
   const canUserPick = Boolean(phase === "draft" && currentTeam?.id === userTeamId && selected && isDraftEligibleProspect(selected, displayDraftYear) && !selectedDrafted);
@@ -376,7 +489,7 @@ function App() {
   const activeAllStarRows = activeAllStarSeason ? allStarRows.filter((row) => row.seasonYear === activeAllStarSeason) : [];
   const activeNationalTeamRows = activeNationalTeamSeason ? nationalTeamRows.filter((row) => row.seasonYear === activeNationalTeamSeason) : [];
   const existingTeamSummaries = useMemo(() => createExistingTeamSummaries(teams, existingPlayers, careerPlayers), [careerPlayers, existingPlayers, teams]);
-  const currentRosterRows = useMemo(() => createCurrentRosterRows(selectedTeam, existingPlayers, careerPlayers), [careerPlayers, existingPlayers, selectedTeam]);
+  const currentRosterRows = useMemo(() => createCurrentRosterRows(selectedTeam, existingPlayers, careerPlayers, foreignContracts, foreignPlayers, foreignMarketYear), [careerPlayers, existingPlayers, foreignContracts, foreignMarketYear, foreignPlayers, selectedTeam]);
   const teamCycleSummary = useMemo(() => createTeamCycleSummary(selectedTeam, existingPlayers, careerPlayers), [careerPlayers, existingPlayers, selectedTeam]);
   const latestSeasonYear = Math.max(0, ...seasonResults.map((result) => result.yearIndex));
   const latestSeasonResults = seasonResults.filter((result) => result.yearIndex === latestSeasonYear);
@@ -385,7 +498,7 @@ function App() {
   const userSeasonHistory = userTeamId ? seasonResults.filter((result) => result.teamId === userTeamId) : [];
   const userNextDraftPicks = userTeamId ? nextDraftPicks.filter((pick) => pick.ownerTeamId === userTeamId) : [];
   const latestPickTradeEvents = pickTradeEvents.filter((event) => event.yearIndex === latestSeasonYear);
-  const userNeedRows = selectedTeam ? createNeedRows(selectedTeam, needHistory, existingPlayers, careerPlayers) : [];
+  const userNeedRows = selectedTeam ? createNeedRows(selectedTeam, needHistory, existingPlayers, careerPlayers, foreignContracts, foreignPlayers, foreignMarketYear) : [];
   const topNeeds = userNeedRows.slice(0, 3);
   const risingNeeds = userNeedRows.filter((row) => row.change > 0).slice(0, 3);
   const fallingNeeds = userNeedRows.filter((row) => row.change < 0).slice(0, 3);
@@ -467,6 +580,28 @@ function App() {
     const saved = writeSaveState(currentSaveState);
     setHasSavedCareer(saved);
   }, [currentSaveState, developerScoutingMode, phase, scoutName, showStartScreen]);
+
+  useEffect(() => {
+    if (!game) return;
+    const ensured = ensureForeignPlayerMarket(game);
+    if (ensured !== game) {
+      setForeignPlayerDetailId("");
+      setGame(ensured);
+    }
+  }, [game]);
+
+  useEffect(() => {
+    if (activeTab !== "foreign-recruitment" || !game || !userTeamId) return;
+    const year = game.foreignPlayerMarketYear ?? game.currentYear;
+    if (game.foreignRecruitmentByYear?.[year]) return;
+    setGame({
+      ...game,
+      foreignRecruitmentByYear: {
+        ...(game.foreignRecruitmentByYear ?? {}),
+        [year]: createForeignRecruitmentState(year, teams.map((team) => team.id)),
+      },
+    });
+  }, [activeTab, game, teams, userTeamId]);
 
   useEffect(() => {
     if (!draftPickToast) return undefined;
@@ -585,9 +720,10 @@ function App() {
   }
 
   function applyLoadedSaveState(saved: AppSaveState, message?: string) {
+    const loadedGame = ensureForeignPlayerMarket(saved.game);
     setDeveloperScoutingMode(false);
     setScoutName(saved.scoutName || "무명 스카우터");
-    setGame(saved.game);
+    setGame(loadedGame);
     setDynamicTeams(saved.dynamicTeams ?? []);
     setPhase(saved.phase ?? "team-selection");
     setActiveTab(saved.activeTab === ("schools" as MainTab) || saved.activeTab === ("board" as MainTab) ? "draft-room" : saved.activeTab ?? "draft-room");
@@ -612,7 +748,7 @@ function App() {
     setNeedHistory(saved.needHistory ?? []);
     setLegacyEndingSeen(Boolean(saved.legacyEndingSeen));
     setShowLegacyModal(false);
-    setSelectedId(Object.keys(saved.game?.prospectsById ?? {})[0] ?? "");
+    setSelectedId(Object.keys(loadedGame?.prospectsById ?? {})[0] ?? "");
     setHasSavedCareer(true);
     setShowStartScreen(false);
   }
@@ -1368,6 +1504,7 @@ function App() {
 
     const currentYear = baseGame.currentYear + ESTABLISHED_LEAGUE_YEARS;
     const currentDraftProspects = prospectPool.filter((prospect) => isDraftEligibleProspect(prospect, currentYear));
+    const foreignMarket = generateForeignPlayerMarket(createSeededRng(`${seed}-foreign-market-${currentYear}`), currentYear);
     const gameState: GameState = {
       ...baseGame,
       turn: ESTABLISHED_LEAGUE_YEARS,
@@ -1376,6 +1513,8 @@ function App() {
       userTeamId: teamId,
       teams: leagueTeams,
       prospectsById: Object.fromEntries(prospectPool.map((prospect) => [prospect.id, prospect])),
+      foreignPlayerMarketYear: currentYear,
+      foreignPlayersById: Object.fromEntries(foreignMarket.map((player) => [player.id, player])),
       draftClassProfilesByYear: classQuality ? { [currentYear]: classQuality } : {},
       draftClassesByYear: { [currentYear]: currentDraftProspects.map((prospect) => prospect.id) },
       draftPicksByYear: { [currentYear]: picks },
@@ -1406,6 +1545,12 @@ function App() {
     const baseGame = game ?? createNewGame(seed);
     const schools = Object.values(baseGame.schoolsById);
     const { prospects: nextProspects, classQuality } = advanceHighSchoolPlayerPool(rng, draftYear, game?.settings.prospectsPerYear ?? 400, Object.values(baseGame.prospectsById), schools);
+    const foreignMarket = rolloverForeignPlayerMarket(
+      Object.values(baseGame.foreignPlayersById ?? {}),
+      Object.values(baseGame.foreignContractsById ?? {}),
+      draftYear,
+      createSeededRng(`${baseGame.seed}-foreign-market-${draftYear}`),
+    );
     const nextDraftProspects = nextProspects.filter((prospect) => isDraftEligibleProspect(prospect, draftYear));
     const nextGame: GameState = {
       ...baseGame,
@@ -1413,6 +1558,8 @@ function App() {
       currentYear: draftYear,
       teams: teamPool,
       prospectsById: Object.fromEntries(nextProspects.map((prospect) => [prospect.id, prospect])),
+      foreignPlayerMarketYear: draftYear,
+      foreignPlayersById: Object.fromEntries(foreignMarket.map((player) => [player.id, player])),
       draftClassProfilesByYear: {
         ...(baseGame.draftClassProfilesByYear ?? {}),
         [draftYear]: classQuality,
@@ -1489,6 +1636,22 @@ function App() {
     const nextExistingPlayers = advanceExistingPlayers(existingPlayers.length > 0 ? existingPlayers : createInitialExistingPlayers(teams), nextYear);
     const previousResults = seasonResults.filter((result) => result.yearIndex === careerYear);
     const nextSeasonResults = simulateTeamSeason(teams, selectionSource, rosterLimitedPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments);
+    const simulatedForeignContracts = simulateForeignContractSeasons(
+      Object.values(game?.foreignContractsById ?? {}),
+      Object.values(game?.foreignPlayersById ?? {}),
+      seasonYear,
+      createSeededRng(`${game?.seed ?? "foreign"}-foreign-season-${seasonYear}`),
+    );
+    const foreignRosterResolution = resolveForeignRosterDecisions(
+      simulatedForeignContracts,
+      teams,
+      seasonYear,
+      createSeededRng(`${game?.seed ?? "foreign"}-foreign-roster-decisions-${seasonYear}`),
+    );
+    const nextForeignContracts = foreignRosterResolution.contracts;
+    const foreignDepartureMessages = nextForeignContracts
+      .filter((contract) => contract.teamId === userTeamId && contract.status === "overseas-departed" && contract.endedYear === seasonYear)
+      .map((contract) => `${contract.playerSnapshot?.name ?? "외국인 선수"}, ${contract.overseasDestination ?? "해외 리그"} 진출을 위해 팀을 떠났습니다.`);
     rosterLimitedPlayers = simulateProSeasonStats(rosterLimitedPlayers, nextSeasonResults, nextExistingPlayers, seasonYear, nextYear);
     awardSingleRookieOfYear(rosterLimitedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     applySeasonAwardAchievements(rosterLimitedPlayers, createAwardRowsForSeason(seasonYear, nextYear, rosterLimitedPlayers, teams, nextExistingPlayers, nextSeasonResults), nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
@@ -1516,6 +1679,17 @@ function App() {
     setTeamTradeStrengthAdjustments((current) => mergeStrengthAdjustments(current, tradeResult.strengthAdjustments));
     setDynamicTeams(needsUpdate.teams);
     setNeedHistory((items) => [...items, ...createNeedSnapshots(seasonYear, needsUpdate.teams)].slice(-120));
+    if (foreignDepartureMessages.length > 0) {
+      setNotifications((items) => [...foreignDepartureMessages, ...items].slice(0, 8));
+    }
+    setGame((current) => current ? {
+      ...current,
+      foreignContractsById: Object.fromEntries(nextForeignContracts.map((contract) => [contract.id, contract])),
+      foreignRosterDecisionsByYear: {
+        ...(current.foreignRosterDecisionsByYear ?? {}),
+        [seasonYear]: foreignRosterResolution.decisions,
+      },
+    } : current);
     if (!selectedCareerId && nextPlayers[0]) {
       setSelectedCareerId(nextPlayers[0].playerId);
     }
@@ -1592,6 +1766,94 @@ function App() {
     return userPlayerRowClass(careerPlayers.find((candidate) => candidate.playerId === playerId));
   }
 
+  function toggleForeignShortlist(playerId: ForeignPlayerId) {
+    setGame((current) => {
+      if (!current) return current;
+      const shortlist = new Set(current.foreignShortlistIds ?? []);
+      if (shortlist.has(playerId)) shortlist.delete(playerId);
+      else shortlist.add(playerId);
+      return { ...current, foreignShortlistIds: Array.from(shortlist) };
+    });
+  }
+
+  function chooseForeignOfferCandidate(player: ForeignPlayerCandidate) {
+    setForeignOfferPlayerId(player.id);
+    setForeignOfferSalary(Math.round(((player.visible.expectedSalaryUsd.min + player.visible.expectedSalaryUsd.max) / 2) / 10000) * 10000);
+    setForeignOfferYears(1);
+    setForeignOfferRole(defaultForeignOfferRole(player));
+  }
+
+  function processForeignRecruitmentRound() {
+    if (!game || !userTeamId || !foreignRecruitment || foreignRecruitment.status !== "open") return;
+    const contracts = Object.values(game.foreignContractsById ?? {});
+    const previousOffers = Object.values(game.foreignContractOffersById ?? {});
+    const userPending = foreignRecruitment.pendingTeamIds.includes(userTeamId);
+    const roundOffers = generateCpuForeignOffers({
+      year: foreignMarketYear,
+      round: foreignRecruitment.currentRound,
+      teams,
+      teamIds: foreignRecruitment.pendingTeamIds.filter((teamId) => teamId !== userTeamId),
+      candidates: foreignPlayers,
+      contracts,
+      previousOffers,
+      rng: createSeededRng(`${game.seed}-foreign-offers-${foreignMarketYear}-${foreignRecruitment.currentRound}`),
+    }).offers;
+
+    if (userPending) {
+      if (!selectedForeignOfferPlayer || selectedForeignOfferPlayer.status !== "available") {
+        setNotifications((items) => ["오퍼할 용병 후보를 선택해야 합니다.", ...items].slice(0, 8));
+        return;
+      }
+      const validation = validateForeignRosterSigning(contracts, selectedForeignOfferPlayer, userTeamId, foreignMarketYear);
+      if (!validation.allowed) {
+        setNotifications((items) => ["현재 외국인 보유 구성으로는 해당 선수에게 오퍼할 수 없습니다.", ...items].slice(0, 8));
+        return;
+      }
+      const terms: ForeignContractTerms = {
+        years: foreignOfferYears,
+        annualSalaryUsd: Math.max(0, foreignOfferSalary),
+        guaranteedRole: foreignOfferRole,
+      };
+      roundOffers.push(createForeignContractOffer(foreignMarketYear, foreignRecruitment.currentRound, userTeamId, selectedForeignOfferPlayer, terms));
+    }
+
+    if (roundOffers.length === 0) return;
+    const rng = createSeededRng(`${game.seed}-foreign-decisions-${foreignMarketYear}-${foreignRecruitment.currentRound}`);
+    const result = resolveForeignRecruitmentRound({
+      year: foreignMarketYear,
+      round: foreignRecruitment.currentRound,
+      teams,
+      candidates: foreignPlayers,
+      existingContracts: contracts,
+      offers: roundOffers,
+      rng,
+    });
+    const nextRecruitment = advanceForeignRecruitmentState(foreignRecruitment, result);
+    const signedIds = new Set(result.signedCandidates.map((player) => player.id));
+    const nextPlayers = Object.fromEntries(foreignPlayers.map((player) => [player.id, signedIds.has(player.id) ? { ...player, status: "signed" as const } : player]));
+    const nextContracts = Object.fromEntries([...contracts, ...result.contracts].map((contract) => [contract.id, contract]));
+    const nextOffers = Object.fromEntries([...previousOffers, ...result.offers].map((offer) => [offer.id, offer]));
+    setGame({
+      ...game,
+      foreignPlayersById: nextPlayers,
+      foreignContractsById: nextContracts,
+      foreignContractOffersById: nextOffers,
+      foreignRecruitmentByYear: { ...(game.foreignRecruitmentByYear ?? {}), [foreignMarketYear]: nextRecruitment },
+      foreignRecruitmentDecisionsByYear: {
+        ...(game.foreignRecruitmentDecisionsByYear ?? {}),
+        [foreignMarketYear]: [...(game.foreignRecruitmentDecisionsByYear?.[foreignMarketYear] ?? []), ...result.decisions],
+      },
+    });
+    const userOffer = result.offers.find((offer) => offer.teamId === userTeamId);
+    const userMessage = userOffer?.status === "accepted"
+      ? `${selectedForeignOfferPlayer?.name ?? "선택 선수"}와 계약에 합의했습니다.`
+      : userOffer
+        ? `${selectedForeignOfferPlayer?.name ?? "선택 선수"} 영입 경합에서 선택받지 못했습니다.`
+        : `${foreignRecruitment.currentRound}차 용병 영입 시장을 진행했습니다.`;
+    setNotifications((items) => [userMessage, ...items].slice(0, 8));
+    setForeignOfferPlayerId("");
+  }
+
   function openProspectDetail(id: string) {
     setSelectedId(id);
     setProspectDetailId(id as ProspectId);
@@ -1641,6 +1903,109 @@ function App() {
               </button>
             ))}
           </nav>
+
+          {activeTab === "foreign-recruitment" && (
+            <>
+              <section className="foreign-recruitment-dashboard">
+                <div className="panel-head">
+                  <div>
+                    <span className="section-kicker">{foreignMarketYear} 외국인 영입 시장</span>
+                    <h2>{foreignRecruitment?.status === "complete" ? "영입 시장 종료" : `${foreignRecruitment?.currentRound ?? 1}차 희망 선수 제출`}</h2>
+                    <p>희망 선수가 겹치면 제안 조건과 선수 선호도에 따라 계약 구단이 결정됩니다.</p>
+                  </div>
+                  <button className="text-button" onClick={() => { setActiveTab("scouting"); setScoutingSubTab("foreign"); }}>용병 후보 탐색</button>
+                </div>
+                <div className="foreign-recruitment-grid">
+                  <section className="foreign-roster-panel">
+                    <h3>우리 구단 슬롯</h3>
+                    <dl className="metric-grid compact-metrics">
+                      <Metric label="일반 외국인" value={`${userForeignUsage?.standard ?? 0}/3`} />
+                      <Metric label="일반 투수" value={`${userForeignUsage?.standardPitchers ?? 0}/2`} />
+                      <Metric label="일반 야수" value={`${userForeignUsage?.standardHitters ?? 0}/2`} />
+                      <Metric label="아시아쿼터" value={`${userForeignUsage?.asianQuota ?? 0}/1`} />
+                    </dl>
+                    <div className="foreign-contract-list">
+                      {userForeignContracts.length === 0 ? <p className="empty">아직 계약한 외국인 선수가 없습니다.</p> : userForeignContracts.map((contract) => {
+                        const player = foreignPlayers.find((candidate) => candidate.id === contract.playerId) ?? contract.playerSnapshot;
+                        const latestSeason = contract.seasonHistory?.[contract.seasonHistory.length - 1];
+                        return <button key={contract.id} onClick={() => player && setForeignPlayerDetailId(player.id)}>
+                          <strong>{player?.name ?? contract.playerId}</strong>
+                          <span>{foreignSlotLabel(contract.slotType)} · {foreignRoleLabel(contract.guaranteedRole)} · {Math.round(contract.annualSalaryUsd / 10000)}만 달러</span>
+                          {latestSeason && <span>{foreignKboStatLine(latestSeason.stats)} · 적응 {latestSeason.actualAdaptation} · {foreignRetentionLabel(contract.latestRetentionEvaluation?.recommendation)}</span>}
+                        </button>;
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="foreign-offer-panel">
+                    <h3>오퍼 조건</h3>
+                    {selectedForeignOfferPlayer ? (
+                      <>
+                        <button className="foreign-offer-player" onClick={() => setForeignPlayerDetailId(selectedForeignOfferPlayer.id)}>
+                          <strong>{selectedForeignOfferPlayer.name}</strong>
+                          <span>{foreignNationalityLabel(selectedForeignOfferPlayer.nationality)} · {positionLabel(selectedForeignOfferPlayer.primaryPosition)} · {foreignScoutGradeRange(selectedForeignOfferPlayer)}</span>
+                        </button>
+                        <div className="foreign-offer-controls">
+                          <label><span>연평균 금액</span><input type="number" min="0" step="10000" value={foreignOfferSalary} onChange={(event) => setForeignOfferSalary(Number(event.target.value))} /></label>
+                          <label><span>계약 기간</span><select value={foreignOfferYears} onChange={(event) => setForeignOfferYears(Number(event.target.value))}><option value={1}>1년</option><option value={2}>2년</option></select></label>
+                          <label><span>보장 보직</span><select value={foreignOfferRole} onChange={(event) => setForeignOfferRole(event.target.value as ForeignGuaranteedRole)}>{foreignRoleOptions(selectedForeignOfferPlayer).map((role) => <option key={role} value={role}>{foreignRoleLabel(role)}</option>)}</select></label>
+                        </div>
+                        <p className="foreign-offer-guide">예상 총액 {formatForeignSalary(selectedForeignOfferPlayer.visible.expectedSalaryUsd)} · 선호 {foreignPreferenceLabel(selectedForeignOfferPlayer.preferredCondition)}</p>
+                      </>
+                    ) : <p className="empty">관심 후보에서 이번 차수에 오퍼할 선수를 선택하세요.</p>}
+                    <button className="primary-progress-button foreign-submit-offer" disabled={!foreignRecruitment || foreignRecruitment.status === "complete" || (foreignRecruitment.pendingTeamIds.includes(userTeamId!) && !selectedForeignOfferPlayer)} onClick={processForeignRecruitmentRound}>
+                      {foreignRecruitment?.status === "complete" ? "영입 종료" : foreignRecruitment?.pendingTeamIds.includes(userTeamId!) ? `${foreignRecruitment.currentRound}차 오퍼 제출` : `CPU ${foreignRecruitment?.currentRound ?? 1}차 진행`}
+                    </button>
+                  </section>
+
+                  <section className="foreign-decision-panel">
+                    <h3>최근 경합 결과</h3>
+                    <div className="foreign-decision-log">
+                      {foreignDecisions.length === 0 ? <p className="empty">아직 완료된 계약이 없습니다.</p> : [...foreignDecisions].reverse().slice(0, 8).map((decision) => {
+                        const player = foreignPlayers.find((candidate) => candidate.id === decision.playerId);
+                        const winner = teams.find((team) => team.id === decision.winnerTeamId);
+                        return <button key={`${decision.round}-${decision.playerId}`} onClick={() => player && setForeignPlayerDetailId(player.id)}><span>{decision.round}차 · {decision.competingTeamIds.length}개 구단 경합</span><strong>{player?.name ?? decision.playerId} → {winner?.shortName ?? decision.winnerTeamId}</strong><small>{foreignDecisionFactorLabel(decision.winningFactor)}</small></button>;
+                      })}
+                    </div>
+                  </section>
+                </div>
+              </section>
+
+              <section className="workspace foreign-roster-decisions-workspace">
+                <div className="prospect-workspace-head">
+                  <div><h2>시즌 종료 용병 판단</h2><p>{latestForeignRosterDecisionYear ? `${latestForeignRosterDecisionYear}시즌 · 각 구단이 성적과 팀 사정을 반영해 자동 결정` : "시즌 종료 후 재계약과 웨이버 결과가 표시됩니다."}</p></div>
+                </div>
+                {latestForeignRosterDecisions.length === 0 ? <p className="empty">아직 시즌 종료 판단 기록이 없습니다.</p> : (
+                  <div className="table-zone"><table className="prospect-table"><thead><tr><th>구단</th><th>선수</th><th>결정</th><th>평가</th><th>판단 근거</th></tr></thead><tbody>
+                    {latestForeignRosterDecisions.map((decision) => {
+                      const team = teams.find((candidate) => candidate.id === decision.teamId);
+                      const player = foreignPlayers.find((candidate) => candidate.id === decision.playerId)
+                        ?? foreignContracts.find((contract) => contract.playerId === decision.playerId)?.playerSnapshot;
+                      return <tr key={`${decision.seasonYear}-${decision.teamId}-${decision.playerId}`} className={decision.teamId === userTeamId ? "user-team-row" : ""}>
+                        <td>{team?.shortName ?? decision.teamId}</td>
+                        <td className="name-cell"><button className="link-button" onClick={() => player && setForeignPlayerDetailId(player.id)}>{decision.playerName}</button></td>
+                        <td><strong>{foreignRosterDecisionLabel(decision.decision)}</strong>{decision.destination ? ` · ${decision.destination}` : ""}</td>
+                        <td className="num">{decision.score}</td>
+                        <td>{decision.summary}</td>
+                      </tr>;
+                    })}
+                  </tbody></table></div>
+                )}
+              </section>
+
+              <section className="workspace foreign-shortlist-workspace">
+                <div className="prospect-workspace-head">
+                  <div><h2>관심 용병</h2><p>선수 탐색에서 추가한 후보 {foreignShortlist.length}명</p></div>
+                  <button className="text-button" onClick={() => { setActiveTab("scouting"); setScoutingSubTab("foreign"); }}>후보 추가</button>
+                </div>
+                {foreignShortlist.length === 0 ? <p className="empty">선수 탐색 → 용병 후보 탐색에서 ★로 관심 후보를 추가하세요.</p> : (
+                  <div className="table-zone foreign-shortlist-zone"><table className="prospect-table foreign-shortlist-table"><thead><tr><th>이름</th><th>슬롯</th><th>포지션</th><th>전 소속</th><th>최근 성적</th><th>등급</th><th>적응 예상</th><th>예상 총액</th><th>선호 조건</th><th>상태</th><th>오퍼</th></tr></thead><tbody>
+                    {foreignShortlist.map((player) => <tr key={player.id} data-signed={player.status === "signed"} onClick={() => setForeignPlayerDetailId(player.id)}><td className="name-cell">{player.name}</td><td>{foreignSlotLabel(player.slotType)}</td><td>{positionLabel(player.primaryPosition)}</td><td>{foreignLeagueLabel(player.formerLeague)}</td><td>{foreignRecentStatLine(player)}</td><td>{foreignScoutGradeRange(player)}</td><td>{formatAdaptationEstimate(player.visible.expectedAdaptationRange)}</td><td>{formatForeignSalary(player.visible.expectedSalaryUsd)}</td><td>{foreignPreferenceLabel(player.preferredCondition)}</td><td>{player.status === "signed" ? "계약 완료" : "영입 가능"}</td><td><button className="small-button" disabled={player.status !== "available"} onClick={(event) => { event.stopPropagation(); chooseForeignOfferCandidate(player); }}>{foreignOfferPlayerId === player.id ? "선택됨" : "선택"}</button></td></tr>)}
+                  </tbody></table></div>
+                )}
+              </section>
+            </>
+          )}
 
           {activeTab === "draft-room" && <section className="draft-command-center collapsible-section">
             <CollapseButton collapsed={isCollapsed("draft-dashboard")} onClick={() => toggleCollapsed("draft-dashboard")} />
@@ -1885,7 +2250,7 @@ function App() {
             <div className="career-head">
               <div>
                 <h2>현 로스터 구성</h2>
-                <p>드래프트 출신 선수와 기존 선수층을 현재 OVR 기준으로 주전, 플래툰, 2군 역할로 나눕니다.</p>
+                <p>드래프트 출신, 기존 선수층과 계약한 외국인 선수를 실효 OVR 기준으로 주전, 플래툰, 2군 역할에 배치합니다.</p>
               </div>
               <CollapseButton collapsed={isCollapsed("current-roster")} onClick={() => toggleCollapsed("current-roster")} />
             </div>
@@ -1901,6 +2266,7 @@ function App() {
                       <th>부상/군복무</th>
                       <th>드래프트 출신</th>
                       <th>기존 선수층</th>
+                      <th>외국인</th>
                       <th>보강 필요도</th>
                     </tr>
                   </thead>
@@ -1908,12 +2274,13 @@ function App() {
                     {currentRosterRows.map((row) => (
                       <tr key={row.position}>
                         <td><span className={`pos pos-${row.position}`}>{positionLabel(row.position)}</span></td>
-                        <td>{row.starters.length ? row.starters.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">공백</span>}</td>
-                        <td>{row.platoon.length ? row.platoon.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">부족</span>}</td>
-                        <td>{row.secondTeam.length ? row.secondTeam.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">얇음</span>}</td>
-                        <td>{row.inactive.length ? row.inactive.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} />) : <span className="muted">없음</span>}</td>
+                        <td>{row.starters.length ? row.starters.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">공백</span>}</td>
+                        <td>{row.platoon.length ? row.platoon.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">부족</span>}</td>
+                        <td>{row.secondTeam.length ? row.secondTeam.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">얇음</span>}</td>
+                        <td>{row.inactive.length ? row.inactive.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">없음</span>}</td>
                         <td className="num">{row.draftedCount}</td>
                         <td className="num">{row.existingCount}</td>
+                        <td className="num">{row.foreignCount}</td>
                         <td><span className={`need-badge need-${needLevel(row.need)}`}>{needLevelLabel(row.need)} {row.need}</span></td>
                       </tr>
                     ))}
@@ -3247,7 +3614,14 @@ function App() {
             </section>
           )}
 
-          {(activeTab === "draft-room" || activeTab === "scouting") && <section className="controls collapsible-section" aria-label="필터">
+          {activeTab === "scouting" && (
+            <div className="sub-tabs scouting-sub-tabs" aria-label="선수 탐색 하위 탭">
+              <button data-active={scoutingSubTab === "domestic"} onClick={() => setScoutingSubTab("domestic")}>국내 드래프트</button>
+              <button data-active={scoutingSubTab === "foreign"} onClick={() => setScoutingSubTab("foreign")}>용병 후보 탐색</button>
+            </div>
+          )}
+
+          {(activeTab === "draft-room" || (activeTab === "scouting" && scoutingSubTab === "domestic")) && <section className="controls collapsible-section" aria-label="필터">
             <CollapseButton collapsed={isCollapsed("filters")} onClick={() => toggleCollapsed("filters")} />
             {!isCollapsed("filters") && <>
               <div className="filter-head">
@@ -3280,7 +3654,7 @@ function App() {
             </>}
           </section>}
 
-          {(activeTab === "draft-room" || activeTab === "scouting") && <section className="workspace collapsible-section">
+          {(activeTab === "draft-room" || (activeTab === "scouting" && scoutingSubTab === "domestic")) && <section className="workspace collapsible-section">
             <CollapseButton collapsed={isCollapsed("prospects")} onClick={() => toggleCollapsed("prospects")} />
             {!isCollapsed("prospects") && <>
               <div className="prospect-workspace-head">
@@ -3396,7 +3770,96 @@ function App() {
             </>}
           </section>}
 
-          {(activeTab === "draft-room" || activeTab === "scouting") && <section className="comparison">
+          {activeTab === "scouting" && scoutingSubTab === "foreign" && <>
+            <section className="controls foreign-scout-controls" aria-label="용병 필터">
+              <div className="filter-head">
+                <div>
+                  <h2>{game?.foreignPlayerMarketYear ?? displayDraftYear} 용병 후보 시장</h2>
+                  <p>계약 전 공개 리포트입니다. 선수 등급과 적응 전망은 추정치이며 실제 적응 결과는 계약 후 드러납니다.</p>
+                </div>
+                <span>{visibleForeignPlayers.length}명 표시 · 일반 {foreignPlayers.filter((player) => player.slotType === "standard").length}명 · 아시아쿼터 {foreignPlayers.filter((player) => player.slotType === "asian-quota").length}명</span>
+              </div>
+              <Select label="슬롯" value={foreignSlotFilter} onChange={(value) => setForeignSlotFilter(value as ForeignPlayerSlot | "all")} options={["all", "standard", "asian-quota"]} labelMap={{ standard: "일반 외국인", "asian-quota": "아시아쿼터" }} />
+              <Select label="분류" value={foreignGroupFilter} onChange={(value) => setForeignGroupFilter(value as ForeignPlayerGroup | "all")} options={["all", "pitcher", "hitter"]} labelMap={{ pitcher: "투수", hitter: "야수" }} />
+              <Select label="국적" value={foreignNationalityFilter} onChange={setForeignNationalityFilter} options={["all", ...foreignNationalities]} labelMap={FOREIGN_NATIONALITY_LABELS} />
+              <Select label="전 소속 리그" value={foreignLeagueFilter} onChange={(value) => setForeignLeagueFilter(value as ForeignOriginLeague | "all")} options={["all", ...foreignLeagues]} labelMap={FOREIGN_LEAGUE_LABELS} />
+              <button className="text-button" onClick={() => {
+                setForeignSlotFilter("all");
+                setForeignGroupFilter("all");
+                setForeignNationalityFilter("all");
+                setForeignLeagueFilter("all");
+              }}>필터 초기화</button>
+            </section>
+
+            <section className="workspace foreign-scout-workspace">
+              <div className="prospect-workspace-head">
+                <div>
+                  <h2>용병 스카우트 명단</h2>
+                  <p>전체 기록과 리포트를 비교하고, 영입 검토 대상을 관심 목록에 추가합니다.</p>
+                </div>
+                <button className="text-button" onClick={() => setForeignSortDirection((direction) => direction === "asc" ? "desc" : "asc")}>정렬 {foreignSortDirection === "asc" ? "오름차순" : "내림차순"}</button>
+              </div>
+              <div className="table-zone foreign-table-zone">
+                <table className="prospect-table foreign-scout-table">
+                  <thead>
+                    <tr>
+                      <th>관심</th>
+                      <th>슬롯</th>
+                      <th>시장 구분</th>
+                      <ForeignSortableTh label="이름" column="name" sortKey={foreignSortKey} direction={foreignSortDirection} onSort={setForeignSortKey} />
+                      <th>국적</th>
+                      <ForeignSortableTh label="나이" column="age" sortKey={foreignSortKey} direction={foreignSortDirection} onSort={setForeignSortKey} />
+                      <th>포지션</th>
+                      <th>투/타</th>
+                      <th>전 소속</th>
+                      <th>경력 수준</th>
+                      <th>최근 성적</th>
+                      <th>주요 툴</th>
+                      <th>구종</th>
+                      <th>등급</th>
+                      <ForeignSortableTh label="적응 예상" column="adaptation" sortKey={foreignSortKey} direction={foreignSortDirection} onSort={setForeignSortKey} />
+                      <ForeignSortableTh label="예상 총액" column="salary" sortKey={foreignSortKey} direction={foreignSortDirection} onSort={setForeignSortKey} />
+                      <th>선호 조건</th>
+                      <th>강점</th>
+                      <th>약점</th>
+                      <ForeignSortableTh label="위험" column="risk" sortKey={foreignSortKey} direction={foreignSortDirection} onSort={setForeignSortKey} />
+                      <th>리스크 태그</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleForeignPlayers.map((player) => (
+                      <tr key={player.id} data-signed={player.status === "signed"} onClick={() => setForeignPlayerDetailId(player.id)}>
+                        <td><button className="icon-button" data-active={(game?.foreignShortlistIds ?? []).includes(player.id)} onClick={(event) => { event.stopPropagation(); toggleForeignShortlist(player.id); }}>★</button></td>
+                        <td><span className="foreign-slot" data-slot={player.slotType}>{foreignSlotLabel(player.slotType)}</span></td>
+                        <td>{foreignMarketEntryLabel(player)}</td>
+                        <td className="name-cell"><button className="link-button" onClick={() => setForeignPlayerDetailId(player.id)}>{player.name}</button></td>
+                        <td>{foreignNationalityLabel(player.nationality)}</td>
+                        <td className="num">{player.age}</td>
+                        <td><span className={`pos pos-${player.primaryPosition}`}>{positionLabel(player.primaryPosition)}</span>{player.secondaryPositions.length > 0 ? ` / ${player.secondaryPositions.map(positionLabel).join(", ")}` : ""}</td>
+                        <td>{player.throws}/{player.bats}</td>
+                        <td>{foreignLeagueLabel(player.formerLeague)}</td>
+                        <td>{player.formerClubLevel}</td>
+                        <td>{foreignRecentStatLine(player)}</td>
+                        <td>{foreignToolLine(player)}</td>
+                        <td>{player.pitchMix?.join("·") ?? "-"}</td>
+                        <td><span className={`grade grade-${player.visible.scoutGrade}`}>{foreignScoutGradeRange(player)}</span></td>
+                        <td>{formatAdaptationEstimate(player.visible.expectedAdaptationRange)}</td>
+                        <td className="num">{formatForeignSalary(player.visible.expectedSalaryUsd)}</td>
+                        <td>{foreignPreferenceLabel(player.preferredCondition)}</td>
+                        <td>{player.visible.strengths.join(" · ")}</td>
+                        <td>{player.visible.weaknesses.join(" · ")}</td>
+                        <td><span className={`risk risk-${player.visible.riskLevel}`}>{riskText(player.visible.riskLevel)}</span></td>
+                        <td>{player.visible.riskTags.map(foreignRiskLabel).join(" · ") || "없음"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {visibleForeignPlayers.length === 0 && <p className="empty">조건에 맞는 용병 후보가 없습니다.</p>}
+              </div>
+            </section>
+          </>}
+
+          {(activeTab === "draft-room" || (activeTab === "scouting" && scoutingSubTab === "domestic")) && <section className="comparison">
             <div className="comparison-head">
               <h2>비교 목록</h2>
               <div className="head-actions">
@@ -3419,6 +3882,10 @@ function App() {
               onDraft={() => userPick(prospectDetail)}
               onClose={() => setProspectDetailId("")}
             />
+          )}
+
+          {foreignPlayerDetail && (
+            <ForeignPlayerModal player={foreignPlayerDetail} contract={foreignPlayerDetailContract} onClose={() => setForeignPlayerDetailId("")} />
           )}
 
           {detailCareerPlayer && (
@@ -3866,20 +4333,247 @@ function SortableTh({ label, column, sortKey, direction, onSort }: { label: stri
   );
 }
 
+function ForeignSortableTh({ label, column, sortKey, direction, onSort }: { label: string; column: ForeignSortKey; sortKey: ForeignSortKey; direction: SortDirection; onSort: (key: ForeignSortKey) => void }) {
+  return (
+    <th>
+      <button className="sort-button" onClick={() => onSort(column)}>
+        {label} {sortKey === column ? (direction === "asc" ? "▲" : "▼") : ""}
+      </button>
+    </th>
+  );
+}
+
+function compareForeignPlayers(left: ForeignPlayerCandidate, right: ForeignPlayerCandidate, key: ForeignSortKey, direction: SortDirection): number {
+  const multiplier = direction === "asc" ? 1 : -1;
+  if (key === "name") return left.name.localeCompare(right.name) * multiplier;
+  const value = (player: ForeignPlayerCandidate) => {
+    if (key === "age") return player.age;
+    if (key === "adaptation") return (player.visible.expectedAdaptationRange.min + player.visible.expectedAdaptationRange.max) / 2;
+    if (key === "salary") return player.visible.expectedSalaryUsd.max;
+    return { low: 1, medium: 2, high: 3, extreme: 4 }[player.visible.riskLevel];
+  };
+  return (value(left) - value(right)) * multiplier || left.name.localeCompare(right.name);
+}
+
+function foreignSlotLabel(slot: ForeignPlayerSlot): string {
+  return slot === "standard" ? "일반" : "아시아";
+}
+
+function foreignMarketEntryLabel(player: ForeignPlayerCandidate): string {
+  if (player.marketCarryover?.source === "waiver") return "웨이버 재도전";
+  if (player.marketCarryover?.source === "top") return "상위 잔류";
+  if (player.marketCarryover?.source === "random") return "무작위 잔류";
+  return "신규 후보";
+}
+
+function foreignNationalityLabel(nationality: string): string {
+  return FOREIGN_NATIONALITY_LABELS[nationality] ?? nationality;
+}
+
+function foreignLeagueLabel(league: ForeignOriginLeague): string {
+  return FOREIGN_LEAGUE_LABELS[league] ?? league;
+}
+
+function foreignPreferenceLabel(preference: ForeignPlayerCandidate["preferredCondition"]): string {
+  if (preference === "money") return "계약 규모";
+  if (preference === "championship") return "우승 가능성";
+  if (preference === "guaranteed-role") return "보직 보장";
+  if (preference === "stability") return "안정적인 환경";
+  if (preference === "large-market") return "큰 시장";
+  return "해외 재진출";
+}
+
+function foreignRoleOptions(player: ForeignPlayerCandidate): ForeignGuaranteedRole[] {
+  return player.playerGroup === "pitcher"
+    ? ["starting-pitcher", "closer", "bullpen", "flexible-pitcher"]
+    : ["everyday-player", "platoon-player", "bench-player"];
+}
+
+function defaultForeignOfferRole(player: ForeignPlayerCandidate): ForeignGuaranteedRole {
+  if (player.playerGroup === "hitter") return "everyday-player";
+  return player.primaryPosition === "SP" ? "starting-pitcher" : "bullpen";
+}
+
+function foreignRoleLabel(role: ForeignGuaranteedRole): string {
+  if (role === "starting-pitcher") return "선발 보장";
+  if (role === "closer") return "마무리 보장";
+  if (role === "bullpen") return "불펜 보장";
+  if (role === "flexible-pitcher") return "투수 보직 협의";
+  if (role === "everyday-player") return "주전 보장";
+  if (role === "platoon-player") return "플래툼";
+  return "백업";
+}
+
+function foreignRetentionLabel(recommendation?: ForeignRetentionRecommendation): string {
+  if (recommendation === "priority-renewal") return "최우선 재계약";
+  if (recommendation === "renewal") return "재계약 권고";
+  if (recommendation === "review") return "조건부 검토";
+  if (recommendation === "release-candidate") return "결별 검토";
+  return "평가 전";
+}
+
+function foreignRosterDecisionLabel(decision: ForeignRosterDecisionType): string {
+  if (decision === "renewed") return "재계약";
+  if (decision === "retained") return "계약 유지";
+  if (decision === "non-renewal") return "재계약 포기";
+  if (decision === "waived") return "웨이버 공시";
+  return "해외 진출";
+}
+
+function foreignKboStatLine(stats: ForeignRecentStats): string {
+  if (stats.kind === "pitcher") {
+    return `${stats.games}경기 ${stats.innings.toFixed(1)}이닝 ERA ${stats.era.toFixed(2)} · ${stats.wins}승 ${stats.losses}패${stats.saves ? ` ${stats.saves}세이브` : ""}${stats.holds ? ` ${stats.holds}홀드` : ""}`;
+  }
+  return `${stats.games}경기 ${stats.average.toFixed(3)} · ${stats.homeRuns}홈런 · OPS ${stats.ops.toFixed(3)}`;
+}
+
+function foreignDecisionFactorLabel(factor: ForeignPlayerCandidate["preferredCondition"] | "opportunity"): string {
+  if (factor === "money") return "금액 조건";
+  if (factor === "championship") return "우승 가능성";
+  if (factor === "guaranteed-role") return "보장 보직";
+  if (factor === "stability") return "계약 안정성";
+  if (factor === "large-market") return "시장 규모";
+  if (factor === "overseas-return") return "해외 재진출 경로";
+  return "출전 기회";
+}
+
+function foreignRiskLabel(risk: ForeignPlayerCandidate["visible"]["riskTags"][number]): string {
+  if (risk === "injury-history") return "부상 이력";
+  if (risk === "command-variance") return "제구 기복";
+  if (risk === "breaking-ball-adjustment") return "변화구 적응";
+  if (risk === "velocity-decline") return "구속 하락";
+  if (risk === "strikeout-heavy") return "삼진 과다";
+  if (risk === "defensive-limit") return "수비 한계";
+  if (risk === "limited-sample") return "표본 부족";
+  if (risk === "age-decline") return "노쇠화 위험";
+  return "KBO 적응";
+}
+
+function foreignRecentStatLine(player: ForeignPlayerCandidate): string {
+  const stats = player.recentStats;
+  if (stats.kind === "pitcher") return `ERA ${stats.era.toFixed(2)} · ${stats.innings}이닝 · K/9 ${stats.strikeoutsPerNine.toFixed(1)} · BB/9 ${stats.walksPerNine.toFixed(1)}`;
+  return `${stats.average.toFixed(3)} / ${stats.onBasePercentage.toFixed(3)} / ${stats.sluggingPercentage.toFixed(3)} · ${stats.homeRuns}홈런`;
+}
+
+function foreignToolLine(player: ForeignPlayerCandidate): string {
+  const tools: Array<[string, number]> = player.pitcherTools
+    ? [
+        ["구위", player.pitcherTools.stuff],
+        ["제구", player.pitcherTools.command],
+        ["구속", player.pitcherTools.velocity],
+        ["체력", player.pitcherTools.stamina],
+        ["멘탈", player.pitcherTools.mentality],
+      ]
+    : player.hitterTools
+      ? [
+          ["컨택", player.hitterTools.contact],
+          ["파워", player.hitterTools.power],
+          ["선구안", player.hitterTools.discipline],
+          ["주루", player.hitterTools.speed],
+          ["수비", player.hitterTools.defense],
+          ["멘탈", player.hitterTools.mentality],
+        ]
+      : [];
+  if (tools.length === 0) return "-";
+  tools.sort((left, right) => right[1] - left[1]);
+  const topScore = tools[0][1];
+  const thirdScore = tools[2]?.[1] ?? 0;
+  const fourthScore = tools[3]?.[1] ?? 0;
+  const count = fourthScore >= 66 || topScore - fourthScore <= 7 ? 4 : thirdScore >= 60 || topScore - thirdScore <= 9 ? 3 : 2;
+  return tools.slice(0, count).map(([label]) => label).join(" · ");
+}
+
+function foreignScoutGradeRange(player: ForeignPlayerCandidate): string {
+  const gradeOrder: ScoutGrade[] = ["S", "A", "B", "C", "D", "E"];
+  const gradeForOverall = (overall: number): ScoutGrade => {
+    if (overall >= 80) return "S";
+    if (overall >= 73) return "A";
+    if (overall >= 66) return "B";
+    if (overall >= 59) return "C";
+    if (overall >= 52) return "D";
+    return "E";
+  };
+  let highGrade = gradeForOverall(player.visible.expectedOverallRange.max);
+  let lowGrade = gradeForOverall(player.visible.expectedOverallRange.min);
+  if (highGrade === lowGrade) {
+    const index = gradeOrder.indexOf(highGrade);
+    if (index < gradeOrder.length - 1) lowGrade = gradeOrder[index + 1];
+    else if (index > 0) highGrade = gradeOrder[index - 1];
+  }
+  return `${highGrade}~${lowGrade}`;
+}
+
+function formatForeignSalary(range: { min: number; max: number }): string {
+  return `${Math.round(range.min / 10000)}만~${Math.round(range.max / 10000)}만 달러`;
+}
+
+function createForeignCareerTotals(player: ForeignPlayerCandidate): ForeignCareerTotals {
+  if (player.playerGroup === "pitcher") {
+    const seasons = player.careerHistory.map((season) => season.stats).filter((stats) => stats.kind === "pitcher");
+    const innings = seasons.reduce((sum, stats) => sum + stats.innings, 0);
+    const earnedRuns = seasons.reduce((sum, stats) => sum + stats.era * stats.innings / 9, 0);
+    const weightedWhip = innings > 0 ? seasons.reduce((sum, stats) => sum + stats.whip * stats.innings, 0) / innings : 0;
+    const strikeouts = seasons.reduce((sum, stats) => sum + stats.strikeouts, 0);
+    const walks = seasons.reduce((sum, stats) => sum + stats.walks, 0);
+    return {
+      kind: "pitcher",
+      games: seasons.reduce((sum, stats) => sum + stats.games, 0),
+      wins: seasons.reduce((sum, stats) => sum + stats.wins, 0),
+      losses: seasons.reduce((sum, stats) => sum + stats.losses, 0),
+      saves: seasons.reduce((sum, stats) => sum + stats.saves, 0),
+      holds: seasons.reduce((sum, stats) => sum + stats.holds, 0),
+      innings: roundTo(innings, 1),
+      era: innings > 0 ? earnedRuns * 9 / innings : 0,
+      whip: weightedWhip,
+      strikeouts,
+      walks,
+      strikeoutsPerNine: innings > 0 ? strikeouts * 9 / innings : 0,
+      walksPerNine: innings > 0 ? walks * 9 / innings : 0,
+      maxVelocityKph: Math.max(0, ...seasons.map((stats) => stats.maxVelocityKph)),
+    };
+  }
+  const seasons = player.careerHistory.map((season) => season.stats).filter((stats) => stats.kind === "hitter");
+  const plateAppearances = seasons.reduce((sum, stats) => sum + stats.plateAppearances, 0);
+  const atBats = seasons.reduce((sum, stats) => sum + stats.atBats, 0);
+  const hits = seasons.reduce((sum, stats) => sum + stats.hits, 0);
+  const weightedByPa = (value: (stats: (typeof seasons)[number]) => number) => plateAppearances > 0 ? seasons.reduce((sum, stats) => sum + value(stats) * stats.plateAppearances, 0) / plateAppearances : 0;
+  const onBasePercentage = weightedByPa((stats) => stats.onBasePercentage);
+  const sluggingPercentage = weightedByPa((stats) => stats.sluggingPercentage);
+  return {
+    kind: "hitter",
+    games: seasons.reduce((sum, stats) => sum + stats.games, 0),
+    plateAppearances,
+    atBats,
+    hits,
+    doubles: seasons.reduce((sum, stats) => sum + stats.doubles, 0),
+    triples: seasons.reduce((sum, stats) => sum + stats.triples, 0),
+    homeRuns: seasons.reduce((sum, stats) => sum + stats.homeRuns, 0),
+    runsBattedIn: seasons.reduce((sum, stats) => sum + stats.runsBattedIn, 0),
+    stolenBases: seasons.reduce((sum, stats) => sum + stats.stolenBases, 0),
+    average: atBats > 0 ? hits / atBats : 0,
+    onBasePercentage,
+    sluggingPercentage,
+    ops: onBasePercentage + sluggingPercentage,
+    strikeoutRate: weightedByPa((stats) => stats.strikeoutRate),
+    walkRate: weightedByPa((stats) => stats.walkRate),
+  };
+}
+
 type RosterMember = {
   id: string;
   name: string;
   overall: number;
   age?: number;
   primaryPosition: Position;
-  source: "drafted" | "existing";
+  source: "drafted" | "existing" | "foreign";
   playerId?: ProspectId;
+  foreignPlayerId?: ForeignPlayerId;
   note: string;
   bullpenRole?: NonNullable<CareerPlayerState["bullpenRole"]>;
   fieldingRole?: NonNullable<CareerPlayerState["fieldingRole"]>;
 };
 
-function RosterMemberButton({ member, onSelect }: { member: RosterMember; onSelect: (id: ProspectId) => void }) {
+function RosterMemberButton({ member, onSelect, onSelectForeign }: { member: RosterMember; onSelect: (id: ProspectId) => void; onSelectForeign: (id: ForeignPlayerId) => void }) {
   const note = member.fieldingRole ? `${member.fieldingRole} · ${member.note}` : member.bullpenRole ? `${member.bullpenRole} · ${member.note}` : member.note;
   const content = (
     <>
@@ -3889,6 +4583,9 @@ function RosterMemberButton({ member, onSelect }: { member: RosterMember; onSele
   );
   if (member.playerId) {
     return <button className="roster-member" data-source={member.source} onClick={() => onSelect(member.playerId!)}>{content}</button>;
+  }
+  if (member.foreignPlayerId) {
+    return <button className="roster-member" data-source={member.source} onClick={() => onSelectForeign(member.foreignPlayerId!)}>{content}</button>;
   }
   return <span className="roster-member" data-source={member.source}>{content}</span>;
 }
@@ -4235,6 +4932,188 @@ function PlayerNewsTimeline({ news, prospects, players, onSelect }: { news: Care
         </section>
       ))}
     </div>
+  );
+}
+
+function ForeignPlayerModal({ player, contract, onClose }: { player: ForeignPlayerCandidate; contract?: ForeignContract; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<"career" | "seasons" | "kbo" | "report">("career");
+  const totals = createForeignCareerTotals(player);
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="player-detail-modal foreign-player-modal" role="dialog" aria-modal="true" aria-labelledby="foreign-player-title" onClick={(event) => event.stopPropagation()}>
+        <div className="panel-head">
+          <div>
+            <h2 id="foreign-player-title">{player.name}</h2>
+            <p>{foreignNationalityLabel(player.nationality)} · {player.age}세 · {positionLabel(player.primaryPosition)} · {foreignLeagueLabel(player.formerLeague)}</p>
+          </div>
+          <button className="text-button" onClick={onClose}>닫기</button>
+        </div>
+        <div className="detail-line">
+          <span className="foreign-slot" data-slot={player.slotType}>{foreignSlotLabel(player.slotType)}</span>
+          <span className={`pos pos-${player.primaryPosition}`}>{positionLabel(player.primaryPosition)}</span>
+          <span>{player.throws}/{player.bats}</span>
+          <span>{player.formerClubLevel}</span>
+          <span>등급 {foreignScoutGradeRange(player)}</span>
+          <span>리포트 신뢰도 {Math.round(player.visible.confidence * 100)}%</span>
+        </div>
+        <div className="modal-tabs" aria-label="용병 상세 탭">
+          <button data-active={activeTab === "career"} onClick={() => setActiveTab("career")}>통산 성적</button>
+          <button data-active={activeTab === "seasons"} onClick={() => setActiveTab("seasons")}>연도별 기록</button>
+          {contract && <button data-active={activeTab === "kbo"} onClick={() => setActiveTab("kbo")}>KBO 성적</button>}
+          <button data-active={activeTab === "report"} onClick={() => setActiveTab("report")}>스카우트 리포트</button>
+        </div>
+
+        {activeTab === "career" && (
+          <div className="modal-detail-grid">
+            <section className="detail-block wide-detail-block foreign-career-summary">
+              <div className="foreign-career-heading">
+                <div>
+                  <h3>최근 {player.careerHistory.length}시즌 통산</h3>
+                  <p>{player.careerHistory[0]?.seasonYear}~{player.careerHistory[player.careerHistory.length - 1]?.seasonYear}년 기록 합계</p>
+                </div>
+                <strong>{totals.kind === "pitcher" ? `ERA ${totals.era.toFixed(2)}` : `OPS ${totals.ops.toFixed(3)}`}</strong>
+              </div>
+              <dl className="metric-grid foreign-career-metrics">
+                {totals.kind === "pitcher" ? <>
+                  <Metric label="경기" value={totals.games} />
+                  <Metric label="승-패" value={`${totals.wins}-${totals.losses}`} />
+                  <Metric label="세이브" value={totals.saves} />
+                  <Metric label="홀드" value={totals.holds} />
+                  <Metric label="이닝" value={totals.innings.toFixed(1)} />
+                  <Metric label="ERA" value={totals.era.toFixed(2)} />
+                  <Metric label="WHIP" value={totals.whip.toFixed(2)} />
+                  <Metric label="탈삼진" value={totals.strikeouts} />
+                  <Metric label="볼넷" value={totals.walks} />
+                  <Metric label="K/9" value={totals.strikeoutsPerNine.toFixed(1)} />
+                  <Metric label="BB/9" value={totals.walksPerNine.toFixed(1)} />
+                  <Metric label="최고구속" value={`${totals.maxVelocityKph.toFixed(1)}km/h`} />
+                </> : <>
+                  <Metric label="경기" value={totals.games} />
+                  <Metric label="타석" value={totals.plateAppearances} />
+                  <Metric label="타수" value={totals.atBats} />
+                  <Metric label="안타" value={totals.hits} />
+                  <Metric label="2루타" value={totals.doubles} />
+                  <Metric label="3루타" value={totals.triples} />
+                  <Metric label="홈런" value={totals.homeRuns} />
+                  <Metric label="타점" value={totals.runsBattedIn} />
+                  <Metric label="도루" value={totals.stolenBases} />
+                  <Metric label="타율" value={totals.average.toFixed(3)} />
+                  <Metric label="출루율" value={totals.onBasePercentage.toFixed(3)} />
+                  <Metric label="장타율" value={totals.sluggingPercentage.toFixed(3)} />
+                  <Metric label="OPS" value={totals.ops.toFixed(3)} />
+                  <Metric label="삼진율" value={`${(totals.strikeoutRate * 100).toFixed(1)}%`} />
+                  <Metric label="볼넷율" value={`${(totals.walkRate * 100).toFixed(1)}%`} />
+                </>}
+              </dl>
+            </section>
+            <section className="detail-block">
+              <h3>계약 판단</h3>
+              <dl className="metric-grid compact-metrics">
+                <Metric label="적응 예상" value={formatAdaptationEstimate(player.visible.expectedAdaptationRange)} />
+                <Metric label="예상 총액" value={formatForeignSalary(player.visible.expectedSalaryUsd)} />
+                <Metric label="선호 조건" value={foreignPreferenceLabel(player.preferredCondition)} />
+              </dl>
+            </section>
+            <section className="detail-block">
+              <h3>최근 시즌</h3>
+              <p>{foreignRecentStatLine(player)}</p>
+              <p>{player.careerHistory[player.careerHistory.length - 1]?.seasonYear}년 · {foreignLeagueLabel(player.careerHistory[player.careerHistory.length - 1]?.league ?? player.formerLeague)}</p>
+            </section>
+          </div>
+        )}
+
+        {activeTab === "seasons" && (
+          <section className="detail-block wide-detail-block foreign-season-section">
+            <h3>최근 {player.careerHistory.length}년 성적</h3>
+            <div className="pro-stats-table-wrap">
+              {player.playerGroup === "pitcher" ? <ForeignPitcherHistoryTable player={player} /> : <ForeignHitterHistoryTable player={player} />}
+            </div>
+          </section>
+        )}
+
+        {activeTab === "kbo" && contract && (
+          <div className="modal-detail-grid">
+            <section className="detail-block wide-detail-block">
+              <h3>KBO 연도별 성적</h3>
+              {contract.seasonHistory?.length ? (
+                <div className="pro-stats-table-wrap">
+                  <table className="pro-stats-table foreign-history-table">
+                    <thead><tr><th>연도</th><th>나이</th><th>성적</th><th>실제 적응</th><th>실효 OVR</th><th>부상 이탈</th></tr></thead>
+                    <tbody>{contract.seasonHistory.map((season) => <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignKboStatLine(season.stats)}</td><td>{season.actualAdaptation}</td><td>{season.effectiveOverall.toFixed(1)}</td><td>{season.injuryDays}일</td></tr>)}</tbody>
+                  </table>
+                </div>
+              ) : <p className="empty">아직 KBO 시즌을 치르지 않았습니다.</p>}
+            </section>
+            <section className="detail-block">
+              <h3>잔류 평가</h3>
+              {contract.latestRetentionEvaluation ? <>
+                <p><strong>{foreignRetentionLabel(contract.latestRetentionEvaluation.recommendation)} · {contract.latestRetentionEvaluation.score}점</strong></p>
+                <p>성적 평가 {contract.latestRetentionEvaluation.performanceScore}점</p>
+                <List values={contract.latestRetentionEvaluation.reasons} fallback="뚜렷한 평가 사유 없음" />
+              </> : <p className="empty">시즌 종료 후 평가됩니다.</p>}
+            </section>
+            <section className="detail-block">
+              <h3>해외 복귀 가능성</h3>
+              <p>{contract.overseasDestination ? `${contract.overseasDestination} 진출 확정` : `${Math.round((contract.latestRetentionEvaluation?.overseasReturnProbability ?? 0) * 100)}%`}</p>
+              <p>실제 적응도가 낮더라도 KBO 성적이 뛰어나면 MLB·AAA·NPB가 다시 관심을 보일 수 있습니다.</p>
+            </section>
+          </div>
+        )}
+
+        {activeTab === "report" && (
+          <div className="modal-detail-grid">
+            <section className="detail-block wide-detail-block">
+              <h3>종합 의견</h3>
+              <p>{player.visible.summary}</p>
+            </section>
+            <section className="detail-block">
+              <h3>주요 툴</h3>
+              <p>{foreignToolLine(player)}</p>
+              {player.pitchMix && <p>구종: {player.pitchMix.join(" · ")}</p>}
+            </section>
+            <section className="detail-block">
+              <h3>강점</h3>
+              <List values={player.visible.strengths} fallback="두드러진 강점 없음" />
+            </section>
+            <section className="detail-block">
+              <h3>약점</h3>
+              <List values={player.visible.weaknesses} fallback="확인된 약점 없음" />
+            </section>
+            <section className="detail-block">
+              <h3>리스크</h3>
+              <p><span className={`risk risk-${player.visible.riskLevel}`}>{riskText(player.visible.riskLevel)}</span></p>
+              <List values={player.visible.riskTags.map(foreignRiskLabel)} fallback="뚜렷한 위험 태그 없음" />
+            </section>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ForeignPitcherHistoryTable({ player }: { player: ForeignPlayerCandidate }) {
+  return (
+    <table className="pro-stats-table foreign-history-table">
+      <thead><tr><th>연도</th><th>나이</th><th>리그</th><th>경기</th><th>승</th><th>패</th><th>세이브</th><th>홀드</th><th>이닝</th><th>ERA</th><th>WHIP</th><th>탈삼진</th><th>볼넷</th><th>K/9</th><th>BB/9</th><th>평균구속</th><th>최고구속</th></tr></thead>
+      <tbody>{player.careerHistory.map((season) => {
+        if (season.stats.kind !== "pitcher") return null;
+        const stats = season.stats;
+        return <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignLeagueLabel(season.league)}</td><td>{stats.games}</td><td>{stats.wins}</td><td>{stats.losses}</td><td>{stats.saves}</td><td>{stats.holds}</td><td>{stats.innings.toFixed(1)}</td><td>{stats.era.toFixed(2)}</td><td>{stats.whip.toFixed(2)}</td><td>{stats.strikeouts}</td><td>{stats.walks}</td><td>{stats.strikeoutsPerNine.toFixed(1)}</td><td>{stats.walksPerNine.toFixed(1)}</td><td>{stats.averageVelocityKph.toFixed(1)}</td><td>{stats.maxVelocityKph.toFixed(1)}</td></tr>;
+      })}</tbody>
+    </table>
+  );
+}
+
+function ForeignHitterHistoryTable({ player }: { player: ForeignPlayerCandidate }) {
+  return (
+    <table className="pro-stats-table foreign-history-table">
+      <thead><tr><th>연도</th><th>나이</th><th>리그</th><th>경기</th><th>타석</th><th>타수</th><th>안타</th><th>2루타</th><th>3루타</th><th>홈런</th><th>타점</th><th>도루</th><th>타율</th><th>출루율</th><th>장타율</th><th>OPS</th><th>삼진%</th><th>볼넷%</th></tr></thead>
+      <tbody>{player.careerHistory.map((season) => {
+        if (season.stats.kind !== "hitter") return null;
+        const stats = season.stats;
+        return <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignLeagueLabel(season.league)}</td><td>{stats.games}</td><td>{stats.plateAppearances}</td><td>{stats.atBats}</td><td>{stats.hits}</td><td>{stats.doubles}</td><td>{stats.triples}</td><td>{stats.homeRuns}</td><td>{stats.runsBattedIn}</td><td>{stats.stolenBases}</td><td>{stats.average.toFixed(3)}</td><td>{stats.onBasePercentage.toFixed(3)}</td><td>{stats.sluggingPercentage.toFixed(3)}</td><td>{stats.ops.toFixed(3)}</td><td>{(stats.strikeoutRate * 100).toFixed(1)}</td><td>{(stats.walkRate * 100).toFixed(1)}</td></tr>;
+      })}</tbody>
+    </table>
   );
 }
 
@@ -5040,6 +5919,21 @@ function formatRange(range: { min: number; max: number }) {
   if (range.min > 10) return "미지명권";
   if (range.max > 10) return `${range.min}-미지명권`;
   return range.min === range.max ? String(range.min) : `${range.min}-${range.max}`;
+}
+
+function formatAdaptationEstimate(range: { min: number; max: number }): string {
+  const level = (value: number): string => {
+    if (value >= 86) return "최상";
+    if (value >= 73) return "상";
+    if (value >= 61) return "중상";
+    if (value >= 46) return "중";
+    if (value >= 33) return "중하";
+    if (value >= 19) return "하";
+    return "최하";
+  };
+  const high = level(range.max);
+  const low = level(range.min);
+  return high === low ? high : `${high}~${low}`;
 }
 
 function formatNumber(value: number | null | undefined) {
@@ -7524,15 +8418,22 @@ function createExistingTeamSummaries(teams: Team[], players: ExistingLeaguePlaye
   });
 }
 
-function createCurrentRosterRows(team: Team | undefined, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[]) {
+function createCurrentRosterRows(
+  team: Team | undefined,
+  existingPlayers: ExistingLeaguePlayer[],
+  careerPlayers: CareerPlayerState[],
+  foreignContracts: ForeignContract[],
+  foreignPlayers: ForeignPlayerCandidate[],
+  year: number,
+) {
   if (!team) {
-    return POSITIONS.map((position) => ({ position, starters: [], platoon: [], secondTeam: [], inactive: [], draftedCount: 0, existingCount: 0, need: 0 }));
+    return POSITIONS.map((position) => ({ position, starters: [], platoon: [], secondTeam: [], inactive: [], draftedCount: 0, existingCount: 0, foreignCount: 0, need: 0 }));
   }
 
   const usedStarterIds = new Set<string>();
   return POSITIONS.map((position) => {
-    const { draftedMembers, existingMembers, inactiveMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position);
-    const members = [...draftedMembers, ...existingMembers].sort((left, right) => right.overall - left.overall || (left.age ?? 99) - (right.age ?? 99));
+    const { draftedMembers, existingMembers, foreignMembers, inactiveMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position, foreignContracts, foreignPlayers, year);
+    const members = [...draftedMembers, ...existingMembers, ...foreignMembers].sort((left, right) => right.overall - left.overall || (left.age ?? 99) - (right.age ?? 99));
     if (position === "RP") {
       const bullpenMembers = assignBullpenRolesToRosterMembers(members);
       const leverageRoles = new Set(["마무리", "셋업맨", "필승조"]);
@@ -7550,6 +8451,7 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
         inactive: inactiveMembers,
         draftedCount: draftedMembers.length,
         existingCount: existingMembers.length,
+        foreignCount: foreignMembers.length,
         need: calculateRosterAwareNeed(team.positionDepth[position]?.need ?? 0, bullpenMembers, position),
       };
     }
@@ -7571,12 +8473,21 @@ function createCurrentRosterRows(team: Team | undefined, existingPlayers: Existi
       inactive: inactiveMembers,
       draftedCount: draftedMembers.length,
       existingCount: existingMembers.length,
+      foreignCount: foreignMembers.length,
       need: calculateRosterAwareNeed(team.positionDepth[position]?.need ?? 0, members, position),
     };
   });
 }
 
-function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[], position: Position): { draftedMembers: RosterMember[]; existingMembers: RosterMember[]; inactiveMembers: RosterMember[] } {
+function createRosterMembersForPosition(
+  team: Team,
+  existingPlayers: ExistingLeaguePlayer[],
+  careerPlayers: CareerPlayerState[],
+  position: Position,
+  foreignContracts: ForeignContract[] = [],
+  foreignPlayers: ForeignPlayerCandidate[] = [],
+  year = 0,
+): { draftedMembers: RosterMember[]; existingMembers: RosterMember[]; foreignMembers: RosterMember[]; inactiveMembers: RosterMember[] } {
   const activeExisting = existingPlayers.filter((player) => player.teamId === team.id && player.status === "active");
   const activeDrafted = careerPlayers.filter((player) => player.team.id === team.id && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
   const inactivePlayers = activeDrafted.filter((player) => currentPlayerPosition(player) === position && isInactiveRosterPlayer(player));
@@ -7619,7 +8530,28 @@ function createRosterMembersForPosition(team: Team, existingPlayers: ExistingLea
       source: "existing",
       note: "기존 선수층",
     }));
-  return { draftedMembers, existingMembers, inactiveMembers };
+  const foreignPlayerById = new Map(foreignPlayers.map((player) => [player.id, player]));
+  const foreignMembers: RosterMember[] = getActiveForeignContracts(foreignContracts, team.id, year)
+    .map((contract) => ({ contract, player: foreignPlayerById.get(contract.playerId) ?? contract.playerSnapshot }))
+    .filter((entry): entry is { contract: ForeignContract; player: ForeignPlayerCandidate } => Boolean(entry.player))
+    .filter(({ contract, player }) => foreignRosterPosition(contract, player) === position)
+    .map(({ contract, player }) => ({
+      id: `foreign-${contract.id}`,
+      name: player.name,
+      overall: Math.round(effectiveForeignOverall(player.hidden.baseOverall, player.hidden.kboAdaptation)),
+      age: player.age + Math.max(0, year - contract.startYear),
+      primaryPosition: foreignRosterPosition(contract, player),
+      source: "foreign",
+      foreignPlayerId: player.id,
+      note: `${foreignSlotLabel(contract.slotType)} · ${foreignRoleLabel(contract.guaranteedRole)}`,
+    }));
+  return { draftedMembers, existingMembers, foreignMembers, inactiveMembers };
+}
+
+function foreignRosterPosition(contract: ForeignContract, player: ForeignPlayerCandidate): Position {
+  if (contract.guaranteedRole === "closer" || contract.guaranteedRole === "bullpen") return "RP";
+  if (contract.guaranteedRole === "starting-pitcher") return "SP";
+  return player.primaryPosition;
 }
 
 function isInactiveRosterPlayer(player: CareerPlayerState): boolean {
@@ -10495,13 +11427,21 @@ function createNeedSnapshots(year: number, teams: Team[]): TeamNeedSnapshot[] {
   return teams.map((team) => snapshotTeamNeeds(year, team));
 }
 
-function createNeedRows(team: Team, history: TeamNeedSnapshot[], existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[]) {
+function createNeedRows(
+  team: Team,
+  history: TeamNeedSnapshot[],
+  existingPlayers: ExistingLeaguePlayer[],
+  careerPlayers: CareerPlayerState[],
+  foreignContracts: ForeignContract[],
+  foreignPlayers: ForeignPlayerCandidate[],
+  year: number,
+) {
   const snapshots = history.filter((snapshot) => snapshot.teamId === team.id);
   const previous = snapshots.length >= 2 ? snapshots[snapshots.length - 2] : snapshots[snapshots.length - 1];
   return POSITIONS.map((position) => {
     const depth = team.positionDepth[position];
-    const { draftedMembers, existingMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position);
-    const rosterAwareNeed = calculateRosterAwareNeed(depth.need, [...draftedMembers, ...existingMembers], position);
+    const { draftedMembers, existingMembers, foreignMembers } = createRosterMembersForPosition(team, existingPlayers, careerPlayers, position, foreignContracts, foreignPlayers, year);
+    const rosterAwareNeed = calculateRosterAwareNeed(depth.need, [...draftedMembers, ...existingMembers, ...foreignMembers], position);
     const previousNeed = previous?.needs[position] ?? rosterAwareNeed;
     return {
       position,

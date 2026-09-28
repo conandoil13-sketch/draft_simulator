@@ -121,7 +121,8 @@ export function advanceHighSchoolPlayerPool(
   previousProspects: Prospect[],
   schools: SchoolProfile[],
 ): { prospects: Prospect[]; classQuality: DraftClassQualityProfile } {
-  const promotedBase = previousProspects
+  const trajectorySeededProspects = seedLegacyEliteTrajectories(rng, previousProspects);
+  const promotedBase = trajectorySeededProspects
     .filter((prospect) => prospect.schoolYear < 3 && prospect.draftEligibleYear >= year)
     .map((prospect) => promoteProspect(rng, prospect, year, schools));
   const promotedEligible = applyNonHighSchoolEntrants(
@@ -149,8 +150,13 @@ export function advanceHighSchoolPlayerPool(
 function createDraftClassFromSchools(rng: Rng, year: number, count: number, schools: SchoolProfile[], schoolYear: SchoolYear = 3): { prospects: Prospect[]; schools: SchoolProfile[]; classQuality: DraftClassQualityProfile } {
   const assignments = createSchoolAssignments(rng, schools, count);
   const classQuality = createDraftClassQuality(rng);
-  const highSchoolSpecialCount = createHighSchoolSpecialCount(rng, classQuality, schoolYear);
-  const baseProspects = Array.from({ length: count }, (_, index) => createProspect(rng, year, index + 1, assignments[index], classQuality, index < highSchoolSpecialCount, schoolYear));
+  const publicSpecialCount = createHighSchoolSpecialCount(rng, classQuality, schoolYear);
+  const eliteTrajectoryCount = schoolYear === 3 ? publicSpecialCount : createEliteTrajectoryCount(rng, classQuality);
+  const eliteRanks = createEliteTrajectoryRanks(rng, count, eliteTrajectoryCount, publicSpecialCount, schoolYear);
+  const baseProspects = Array.from({ length: count }, (_, index) => {
+    const publicRank = index + 1;
+    return createProspect(rng, year, publicRank, assignments[index], classQuality, eliteRanks.has(publicRank), publicRank <= publicSpecialCount, schoolYear);
+  });
   const prospects = schoolYear === 3 ? applyNonHighSchoolEntrants(rng, year, baseProspects) : baseProspects;
   const accoladeProspects = applyQuotaAccoladesToClass(prospects, observationYearForClass(year, schoolYear));
   return {
@@ -230,10 +236,65 @@ function promoteProspect(rng: Rng, prospect: Prospect, year: number, schools: Sc
       }, year, highSchoolSnapshotNote(growth, nextSchoolYear, event)),
     ],
   };
-  const exposedPromoted = exposePromotedHighSchoolSpecial(promoted, year);
+  const visibilityUpdated = advanceEliteTrajectoryVisibility(rng, promoted, year, growth, event);
+  const exposedPromoted = exposePromotedHighSchoolSpecial(visibilityUpdated, year);
   return nextSchoolYear === 3 && exposedPromoted.mlbDirectStatus === "interest"
     ? maybeApplyMlbDirectEvent(rng, exposedPromoted, year)
     : exposedPromoted;
+}
+
+function createEliteTrajectoryCount(rng: Rng, classQuality: DraftClassQualityProfile): number {
+  if (classQuality.id === "bumper") return randomInt(rng, 5, 8);
+  if (classQuality.id === "strong") return randomInt(rng, 4, 6);
+  if (classQuality.id === "normal") return randomInt(rng, 3, 5);
+  if (classQuality.id === "thin") return randomInt(rng, 2, 3);
+  return 2;
+}
+
+function createEliteTrajectoryRanks(
+  rng: Rng,
+  classSize: number,
+  eliteCount: number,
+  publicSpecialCount: number,
+  schoolYear: SchoolYear,
+): Set<number> {
+  const selected = new Set<number>();
+  for (let rank = 1; rank <= Math.min(eliteCount, publicSpecialCount); rank += 1) selected.add(rank);
+  const hiddenFloor = Math.max(publicSpecialCount + 1, schoolYear === 1 ? 18 : 10);
+  const hiddenCeiling = Math.min(classSize, schoolYear === 1 ? 180 : 110);
+  while (selected.size < eliteCount && hiddenFloor <= hiddenCeiling) {
+    selected.add(randomInt(rng, hiddenFloor, hiddenCeiling));
+  }
+  return selected;
+}
+
+function seedLegacyEliteTrajectories(rng: Rng, prospects: Prospect[]): Prospect[] {
+  const byCohort = new Map<number, Prospect[]>();
+  prospects.filter((prospect) => prospect.schoolYear < 3).forEach((prospect) => {
+    byCohort.set(prospect.draftEligibleYear, [...(byCohort.get(prospect.draftEligibleYear) ?? []), prospect]);
+  });
+  const legacyEliteIds = new Set<ProspectId>();
+  for (const cohort of byCohort.values()) {
+    if (cohort.some((prospect) => prospect.eliteTrajectory !== undefined)) continue;
+    const knownSpecials = cohort.filter((prospect) => prospect.archetype === "고교특급");
+    const target = Math.max(knownSpecials.length, randomInt(rng, 2, 4));
+    [...cohort]
+      .sort((left, right) => eliteTrajectoryScore(right) - eliteTrajectoryScore(left))
+      .slice(0, target)
+      .forEach((prospect) => legacyEliteIds.add(prospect.id));
+  }
+  return prospects.map((prospect) => {
+    if (prospect.eliteTrajectory !== undefined || prospect.schoolYear === 3) return prospect;
+    return { ...prospect, eliteTrajectory: legacyEliteIds.has(prospect.id) };
+  });
+}
+
+function eliteTrajectoryScore(prospect: Prospect): number {
+  return prospect.trueTalent.currentAbility * 0.42
+    + prospect.trueTalent.potential * 0.58
+    + prospect.trueTalent.growthRate * 8
+    + prospect.trueTalent.workEthic * 5
+    - prospect.trueTalent.injuryRisk * 4;
 }
 
 function createHighSchoolSpecialCount(rng: Rng, classQuality: DraftClassQualityProfile, schoolYear: SchoolYear): number {
@@ -248,11 +309,11 @@ function createHighSchoolSpecialCount(rng: Rng, classQuality: DraftClassQualityP
     if (classQuality.id === "normal") return rng.next() < 0.24 ? 1 : 0;
     return rng.next() < 0.12 ? 1 : 0;
   }
-  if (classQuality.id === "bumper") return randomInt(rng, 4, 7);
-  if (classQuality.id === "strong") return randomInt(rng, 2, 4);
-  if (classQuality.id === "normal") return randomInt(rng, 1, 3);
-  if (classQuality.id === "thin") return rng.next() < 0.64 ? 1 : 2;
-  return rng.next() < 0.72 ? 1 : 0;
+  if (classQuality.id === "bumper") return randomInt(rng, 5, 8);
+  if (classQuality.id === "strong") return randomInt(rng, 3, 6);
+  if (classQuality.id === "normal") return randomInt(rng, 2, 4);
+  if (classQuality.id === "thin") return randomInt(rng, 2, 3);
+  return 2;
 }
 
 function createDraftClassQuality(rng: Rng): DraftClassQualityProfile {
@@ -834,12 +895,21 @@ const COLLEGE_PROGRAMS: Array<{ name: string; type: "two-year" | "four-year"; re
   { name: "제주관광대", type: "two-year", region: "제주권" },
 ];
 
-function createProspect(rng: Rng, year: number, publicRank: number, school: SchoolProfile, classQuality: DraftClassQualityProfile, highSchoolSpecial = false, schoolYear: SchoolYear = 3): Prospect {
-  const primaryPosition = highSchoolSpecial ? pickHighSchoolSpecialPosition(rng, school) : pickPosition(rng, school);
+function createProspect(
+  rng: Rng,
+  year: number,
+  publicRank: number,
+  school: SchoolProfile,
+  classQuality: DraftClassQualityProfile,
+  eliteTrajectory = false,
+  highSchoolSpecial = false,
+  schoolYear: SchoolYear = 3,
+): Prospect {
+  const primaryPosition = eliteTrajectory ? pickHighSchoolSpecialPosition(rng, school) : pickPosition(rng, school);
   const playerGroup = POSITION_GROUPS[primaryPosition];
   const dataTier = dataTierFromPublicRank(publicRank);
-  let trueTalent = highSchoolSpecial
-    ? createHighSchoolSpecialTalent(rng, publicRank, dataTier, school, classQuality, primaryPosition)
+  let trueTalent = eliteTrajectory
+    ? createHighSchoolSpecialTalent(rng, publicRank, dataTier, school, classQuality, primaryPosition, schoolYear)
     : createHiddenTalent(rng, publicRank, dataTier, school, classQuality, primaryPosition);
   const age = createAgeForSchoolYear(rng, schoolYear);
   const physical: PhysicalProfile = {
@@ -887,6 +957,8 @@ function createProspect(rng: Rng, year: number, publicRank: number, school: Scho
 
   const prospect: Prospect = {
     id: `prospect-${year}-${publicRank}` as ProspectId,
+    eliteTrajectory,
+    sourceType: "high-school",
     draftYear: year,
     highSchoolEntryYear: year - 2,
     draftEligibleYear: year,
@@ -943,6 +1015,7 @@ function createHighSchoolGrowthChange(rng: Rng, prospect: Prospect): number {
   const room = Math.max(0, prospect.trueTalent.potential - prospect.trueTalent.currentAbility);
   const schoolBias = prospect.schoolDevelopmentBias === "raw" ? 0.45 : prospect.schoolDevelopmentBias === "polished" ? 0.2 : 0;
   const growthSignal = (prospect.trueTalent.growthRate - 0.42) * 4.2;
+  const eliteTrajectoryGrowth = prospect.eliteTrajectory ? 0.75 + Math.min(0.75, room * 0.035) : 0;
   const workSignal = (prospect.trueTalent.workEthic - 0.5) * 2.1;
   const volatilitySwing = randomFloat(rng, -3.8, 3.2) * prospect.trueTalent.volatility;
   const roleCompetitionDrag = rng.next() < roleCompetitionDragChance(prospect) ? randomFloat(rng, 1.1, prospect.schoolYear === 2 ? 4.2 : 3.2) : 0;
@@ -950,7 +1023,7 @@ function createHighSchoolGrowthChange(rng: Rng, prospect: Prospect): number {
   const injuryDrag = rng.next() < prospect.trueTalent.injuryRisk * (prospect.schoolYear === 2 ? 0.26 : 0.2) ? randomFloat(rng, 1.5, 5.2) : 0;
   const lateBloomBonus = room >= 12 && rng.next() < prospect.trueTalent.growthRate * 0.34 ? randomFloat(rng, 0.8, 3.8) : 0;
   const classPressure = prospect.visible.publicRank <= 40 && rng.next() < 0.2 ? randomFloat(rng, 0.7, 2.6) : 0;
-  return roundTo(clamp(growthSignal + workSignal + schoolBias + volatilitySwing + lateBloomBonus - roleCompetitionDrag - physicalStallDrag - injuryDrag - classPressure, -6.5, Math.min(7.2, room + 1.2)), 1);
+  return roundTo(clamp(growthSignal + eliteTrajectoryGrowth + workSignal + schoolBias + volatilitySwing + lateBloomBonus - roleCompetitionDrag - physicalStallDrag - injuryDrag - classPressure, -6.5, Math.min(7.2, room + 1.2)), 1);
 }
 
 function roleCompetitionDragChance(prospect: Prospect): number {
@@ -2413,9 +2486,19 @@ function adjustForkSplitterInjuryRisk(talent: HiddenTalentProfile, pitcherStats?
   };
 }
 
-function createHighSchoolSpecialTalent(rng: Rng, publicRank: number, dataTier: ProspectDataTier, school: SchoolProfile, classQuality: DraftClassQualityProfile, position: Position): HiddenTalentProfile {
-  const currentAbility = randomInt(rng, 75, classQuality.id === "bumper" || publicRank <= 3 ? 79 : 78);
-  const potential = Math.round(clamp(currentAbility + randomFloat(rng, 5, 13) + classQuality.topTalentShift * 0.35, 80, 90));
+function createHighSchoolSpecialTalent(
+  rng: Rng,
+  publicRank: number,
+  dataTier: ProspectDataTier,
+  school: SchoolProfile,
+  classQuality: DraftClassQualityProfile,
+  position: Position,
+  schoolYear: SchoolYear,
+): HiddenTalentProfile {
+  const draftLevelAbility = randomInt(rng, 75, classQuality.id === "bumper" || publicRank <= 3 ? 79 : 78);
+  const underclassGap = schoolYear === 1 ? randomInt(rng, 5, 10) : schoolYear === 2 ? randomInt(rng, 2, 5) : 0;
+  const currentAbility = draftLevelAbility - underclassGap;
+  const potential = Math.round(clamp(draftLevelAbility + randomFloat(rng, 5, 13) + classQuality.topTalentShift * 0.35, 80, 90));
   const pitcher = position === "SP" || position === "RP";
   return {
     currentAbility,
@@ -2471,6 +2554,64 @@ function exposeDraftEligibleHighSchoolSpecial(report: VisibleScoutingReport, cur
   };
 }
 
+function advanceEliteTrajectoryVisibility(
+  rng: Rng,
+  prospect: Prospect,
+  year: number,
+  growth: number,
+  event: HighSchoolIssueEvent,
+): Prospect {
+  if (!prospect.eliteTrajectory || prospect.archetype === "고교특급" || prospect.schoolYear !== 2) return prospect;
+  const eventPenalty = event.type === "long-rehab" || event.type === "repeat-year"
+    ? 0.32
+    : event.type === "injury"
+      ? 0.13
+      : 0;
+  const discoveryChance = clamp(
+    0.18
+      + Math.max(-0.08, growth * 0.055)
+      + prospect.trueTalent.growthRate * 0.14
+      + prospect.trueTalent.workEthic * 0.08
+      - eventPenalty,
+    0.06,
+    0.72,
+  );
+  if (rng.next() >= discoveryChance) return prospect;
+
+  const targetRank = randomInt(rng, growth >= 3 ? 22 : 38, growth >= 3 ? 62 : 96);
+  const visible: VisibleScoutingReport = {
+    ...prospect.visible,
+    publicRank: Math.min(prospect.visible.publicRank, targetRank),
+    scoutGrade: prospect.visible.scoutGrade === "S" || growth >= 4 ? "A" : prospect.visible.scoutGrade === "D" || prospect.visible.scoutGrade === "C" ? "B" : prospect.visible.scoutGrade,
+    confidence: clamp(prospect.visible.confidence + 0.08, 0.28, 0.9),
+    trend: "rising",
+    summary: `2학년 출전 표본이 늘며 전국권 교차 관찰 대상으로 올라왔다. 아직 고교특급 평가를 확정하기보다 3학년 성장과 주전 성적을 확인해야 한다. ${prospect.visible.summary}`,
+    oneLine: `2학년 상위 추적 후보. 툴과 성장세가 보이지만 드래프트 시점의 완성도는 미정이다.`,
+    teamInterest: Array.from(new Set([...prospect.visible.teamInterest, "서울", "부산"])).slice(0, 4),
+  };
+  const updated: Prospect = {
+    ...prospect,
+    reputation: Math.round(clamp(prospect.reputation + randomInt(rng, 7, 13), 0, 100)),
+    draftHype: Math.round(clamp(prospect.draftHype + randomInt(rng, 8, 16), 0, 100)),
+    visible,
+    highSchoolCareerLog: [
+      ...prospect.highSchoolCareerLog,
+      {
+        year,
+        schoolYear: 2,
+        type: "ranking",
+        headline: `${prospect.name}, 2학년 전국권 교차 관찰 대상 진입`,
+        body: "주전 기회와 공개 표본이 늘며 구단별 추적 리스트에 올랐다. 현재 평가는 가능성 단계로, 3학년 성적에 따라 크게 바뀌 수 있다.",
+        importance: 3,
+      },
+    ],
+  };
+  return {
+    ...updated,
+    highSchoolSnapshots: replaceCurrentSnapshot(updated, year, "2학년 전국권 교차 관찰 진입"),
+  };
+}
+
 function exposePromotedHighSchoolSpecial(prospect: Prospect, year: number): Prospect {
   if (!isDraftEligibleHighSchoolSpecialSignal(prospect)) return prospect;
   const exposureAccolades = ["u18-national", "college-hs-allstar"]
@@ -2505,6 +2646,15 @@ function exposePromotedHighSchoolSpecial(prospect: Prospect, year: number): Pros
 function isDraftEligibleHighSchoolSpecialSignal(prospect: Prospect): boolean {
   if (prospect.schoolYear !== 3) return false;
   if (prospect.archetype === "고교특급") return true;
+  if (prospect.eliteTrajectory) {
+    const stalledByHealth = prospect.visible.riskTags.includes("injury-history") && prospect.trueTalent.currentAbility < 75;
+    return (
+      !stalledByHealth &&
+      prospect.trueTalent.currentAbility >= 72 &&
+      prospect.trueTalent.potential >= 80 &&
+      (prospect.visible.trend !== "falling" || prospect.trueTalent.currentAbility >= 76)
+    );
+  }
   return (
     prospect.trueTalent.currentAbility >= 78 &&
     prospect.trueTalent.potential >= 84 &&

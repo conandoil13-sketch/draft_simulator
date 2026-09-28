@@ -3,7 +3,9 @@ import type { NewsItem } from "./news";
 import type { DraftClassQualityProfile, DraftedPlayer, Prospect } from "./player";
 import type { SchoolProfile } from "./school";
 import type { Team } from "./team";
-import type { GamePhase, PlayerId, ProspectId, TeamId, Year } from "./common";
+import type { ForeignPlayerId, GamePhase, PlayerId, ProspectId, TeamId, Year } from "./common";
+import type { ForeignPlayerCandidate } from "./foreignPlayer";
+import type { ForeignContract, ForeignContractOffer, ForeignRecruitmentDecision, ForeignRecruitmentState, ForeignRosterDecision } from "./foreignContract";
 
 export type SeasonStanding = {
   year: Year;
@@ -31,6 +33,14 @@ export type GameState = {
   teams: Team[];
   schoolsById: Record<string, SchoolProfile>;
   prospectsById: Record<string, Prospect>;
+  foreignPlayerMarketYear?: Year;
+  foreignPlayersById?: Record<string, ForeignPlayerCandidate>;
+  foreignContractsById?: Record<string, ForeignContract>;
+  foreignContractOffersById?: Record<string, ForeignContractOffer>;
+  foreignRecruitmentByYear?: Record<Year, ForeignRecruitmentState>;
+  foreignRecruitmentDecisionsByYear?: Record<Year, ForeignRecruitmentDecision[]>;
+  foreignRosterDecisionsByYear?: Record<Year, ForeignRosterDecision[]>;
+  foreignShortlistIds?: ForeignPlayerId[];
   draftClassProfilesByYear?: Record<Year, DraftClassQualityProfile>;
   draftClassesByYear: Record<Year, ProspectId[]>;
   draftPicksByYear: Record<Year, DraftPick[]>;

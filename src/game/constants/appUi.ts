@@ -148,6 +148,7 @@ export const FILTER_PRESETS: { id: FilterPreset; label: string }[] = [
 ];
 export const MAIN_TABS: { id: MainTab; label: string; description: string }[] = [
   { id: "draft-room", label: "드래프트룸", description: "현재 픽, 보드, 남은 선수 테이블" },
+  { id: "foreign-recruitment", label: "용병 스카우트", description: "오퍼, 경합, 계약 현황" },
   { id: "scouting", label: "선수 탐색", description: "정렬, 필터, 상세 리포트, 비교" },
   { id: "team", label: "구단 상황", description: "팀 니즈, 팬 모의지명, 여론" },
   { id: "review", label: "결과/회고", description: "지명 결과, 직후 반응, 회고 평가" },
