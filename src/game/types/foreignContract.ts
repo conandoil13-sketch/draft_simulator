@@ -1,5 +1,6 @@
 import type { ForeignContractId, ForeignOfferId, ForeignPlayerId, TeamId, Year } from "./common";
 import type { ForeignPlayerCandidate, ForeignPlayerGroup, ForeignPlayerPreference, ForeignPlayerSlot, ForeignRecentStats } from "./foreignPlayer";
+import type { SeasonFormCycle } from "./player";
 
 export type ForeignContractStatus = "active" | "expired" | "released" | "voided" | "overseas-departed";
 export type ForeignOverseasDestination = "MLB" | "AAA" | "NPB";
@@ -31,7 +32,8 @@ export type ForeignContractTerms = {
 };
 
 export type ForeignRetentionRecommendation = "priority-renewal" | "renewal" | "review" | "release-candidate";
-export type ForeignRosterDecisionType = "renewed" | "retained" | "non-renewal" | "waived" | "overseas-departure";
+export type ForeignRolePromiseStatus = "protected" | "fulfilled" | "downgraded" | "violated";
+export type ForeignRosterDecisionType = "renewed" | "retained" | "role-downgrade" | "non-renewal" | "waived" | "overseas-departure";
 
 export type ForeignKboSeason = {
   seasonYear: Year;
@@ -39,6 +41,7 @@ export type ForeignKboSeason = {
   actualAdaptation: number;
   effectiveOverall: number;
   injuryDays: number;
+  formCycle?: SeasonFormCycle;
   stats: ForeignRecentStats;
 };
 
@@ -77,6 +80,11 @@ export type ForeignContract = {
   incentivesUsd: number;
   totalValueUsd: number;
   guaranteedRole: ForeignGuaranteedRole;
+  currentRole?: ForeignGuaranteedRole;
+  rolePromiseStatus?: ForeignRolePromiseStatus;
+  rolePromiseGraceUntilYear?: Year;
+  rolePromiseNote?: string;
+  dissatisfaction?: number;
   status: ForeignContractStatus;
   renewalCount: number;
   previousContractId?: ForeignContractId;

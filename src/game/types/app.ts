@@ -1,4 +1,4 @@
-import type { DraftPickId, Position, ProspectId, TeamId } from "./common";
+import type { DraftPickId, ForeignPlayerId, Position, ProspectId, TeamId } from "./common";
 import type { DraftPick } from "./draft";
 import type { GameState } from "./game";
 import type { DevelopmentTools, Prospect } from "./player";
@@ -8,6 +8,33 @@ import type { Team } from "./team";
 export type SortDirection = "asc" | "desc";
 export type PlayerTypeFilter = "all" | "hitters" | "pitchers";
 export type DraftPhase = "team-selection" | "generating" | "pre-draft" | "draft" | "complete";
+export type SeasonCheckpoint = "preseason" | "april" | "june" | "all-star" | "september" | "regular-end" | "postseason" | "wrap-up";
+export type SeasonProgressStatus = "running" | "paused" | "blocked" | "complete";
+export type SeasonActionAlertPriority = "decision" | "confirm" | "info";
+
+export type SeasonProgressLog = {
+  checkpoint: SeasonCheckpoint;
+  label: string;
+  message: string;
+};
+
+export type SeasonActionAlert = {
+  id: string;
+  seasonYear: number;
+  checkpoint: SeasonCheckpoint;
+  priority: SeasonActionAlertPriority;
+  title: string;
+  body: string;
+  resolved: boolean;
+};
+
+export type SeasonProgressState = {
+  seasonYear: number;
+  checkpointIndex: number;
+  status: SeasonProgressStatus;
+  logs: SeasonProgressLog[];
+  generatedNewsIds?: string[];
+};
 export type MainTab = "draft-room" | "foreign-recruitment" | "scouting" | "team" | "review" | "tracking" | "league-history";
 export type LeagueHistorySubTab = "current" | "operations" | "narrative";
 export type NewsViewMode = "timeline" | "player";
@@ -96,6 +123,8 @@ export type AppSaveState = {
   userTeamId?: TeamId;
   selections: DraftSelectionView[];
   notifications: string[];
+  seasonProgress?: SeasonProgressState;
+  seasonActionAlerts?: SeasonActionAlert[];
   predraftIntelEvents: DraftIntelEvent[];
   predraftUserAction?: PreDraftAction;
   predraftStageIndex: number;
@@ -309,6 +338,7 @@ export type YearlyAwardRow = {
   playerName: string;
   note: string;
   playerId?: ProspectId;
+  foreignPlayerId?: ForeignPlayerId;
 };
 
 export type SelectionHistoryRow = {
@@ -320,6 +350,7 @@ export type SelectionHistoryRow = {
   playerName: string;
   note: string;
   playerId?: ProspectId;
+  foreignPlayerId?: ForeignPlayerId;
 };
 
 export type ScoutLegacySummary = {
@@ -377,6 +408,7 @@ export type TeamSeasonResult = {
   draftImpact: number;
   prospectContribution: number;
   regularContribution: number;
+  foreignContribution?: number;
   injuryPenalty: number;
   pickTradeImpact: number;
   randomSwing: number;

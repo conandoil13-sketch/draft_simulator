@@ -84,6 +84,9 @@ import type {
   ScoutLegacySummary,
   SeasonCycleResult,
   SeasonDevelopmentClimate,
+  SeasonActionAlert,
+  SeasonCheckpoint,
+  SeasonProgressState,
   SelectionHistoryRow,
   SchoolSummaryRow,
   SortDirection,
@@ -108,6 +111,17 @@ type ForeignSortKey = "name" | "age" | "adaptation" | "salary" | "risk";
 type ForeignCareerTotals =
   | { kind: "pitcher"; games: number; wins: number; losses: number; saves: number; holds: number; innings: number; era: number; whip: number; strikeouts: number; walks: number; strikeoutsPerNine: number; walksPerNine: number; maxVelocityKph: number }
   | { kind: "hitter"; games: number; plateAppearances: number; atBats: number; hits: number; doubles: number; triples: number; homeRuns: number; runsBattedIn: number; stolenBases: number; average: number; onBasePercentage: number; sluggingPercentage: number; ops: number; strikeoutRate: number; walkRate: number };
+
+const SEASON_CHECKPOINTS: Array<{ id: SeasonCheckpoint; label: string; message: string }> = [
+  { id: "preseason", label: "개막 준비", message: "개막 엔트리와 보직을 확정하고 있습니다." },
+  { id: "april", label: "4월 말", message: "개막 한 달의 데뷔와 초기 적응 결과를 집계합니다." },
+  { id: "june", label: "6월 말", message: "전반기 성적, 부상과 용병 교체 징후를 점검합니다." },
+  { id: "all-star", label: "올스타 휴식기", message: "전반기 결산과 올스타 선발 결과를 정리합니다." },
+  { id: "september", label: "9월 초", message: "순위 경쟁과 신인·수상 경쟁 구도를 확인합니다." },
+  { id: "regular-end", label: "정규시즌 종료", message: "144경기 순위와 개인 성적을 확정합니다." },
+  { id: "postseason", label: "포스트시즌", message: "가을야구 결과와 우승 구단을 확정합니다." },
+  { id: "wrap-up", label: "시즌 결산", message: "수상, 계약과 다음 드래프트 순번을 정리합니다." },
+];
 
 declare global {
   interface Window {
@@ -301,6 +315,8 @@ function App() {
   const [initialRank, setInitialRank] = useState<number | "random">("random");
   const [selections, setSelections] = useState<DraftSelectionView[]>([]);
   const [notifications, setNotifications] = useState<string[]>([]);
+  const [seasonProgress, setSeasonProgress] = useState<SeasonProgressState | undefined>();
+  const [seasonActionAlerts, setSeasonActionAlerts] = useState<SeasonActionAlert[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("rank");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedId, setSelectedId] = useState("");
@@ -474,8 +490,8 @@ function App() {
   const draftRegretRecords = useMemo(() => createDraftRegretRecords(selections, careerPlayers, teams), [careerPlayers, selections, teams]);
   const recordBreakerRows = useMemo(() => createRecordBreakerRows(careerPlayers, teams), [careerPlayers, teams]);
   const allRecordBreakerRows = useMemo(() => createRecordBreakerRows(careerPlayers, teams, 999), [careerPlayers, teams]);
-  const yearlyAwardRows = useMemo(() => createYearlyAwardRows(seasonResults, careerPlayers, teams, existingPlayers), [careerPlayers, existingPlayers, seasonResults, teams]);
-  const allStarRows = useMemo(() => createAllStarHistoryRows(seasonResults, careerPlayers, teams, existingPlayers), [careerPlayers, existingPlayers, seasonResults, teams]);
+  const yearlyAwardRows = useMemo(() => createYearlyAwardRows(seasonResults, careerPlayers, teams, existingPlayers, foreignContracts), [careerPlayers, existingPlayers, foreignContracts, seasonResults, teams]);
+  const allStarRows = useMemo(() => createAllStarHistoryRows(seasonResults, careerPlayers, teams, existingPlayers, foreignContracts), [careerPlayers, existingPlayers, foreignContracts, seasonResults, teams]);
   const nationalTeamRows = useMemo(() => createNationalTeamHistoryRows(seasonResults, careerPlayers, teams, existingPlayers), [careerPlayers, existingPlayers, seasonResults, teams]);
   const awardSeasons = useMemo(() => Array.from(new Set(yearlyAwardRows.map((row) => row.seasonYear))).sort((left, right) => right - left), [yearlyAwardRows]);
   const allStarSeasons = useMemo(() => Array.from(new Set(allStarRows.map((row) => row.seasonYear))).sort((left, right) => right - left), [allStarRows]);
@@ -488,9 +504,10 @@ function App() {
   const activeAwardTitleRows = activeAwardRows.filter((row) => !row.category.startsWith("골든글러브"));
   const activeAllStarRows = activeAllStarSeason ? allStarRows.filter((row) => row.seasonYear === activeAllStarSeason) : [];
   const activeNationalTeamRows = activeNationalTeamSeason ? nationalTeamRows.filter((row) => row.seasonYear === activeNationalTeamSeason) : [];
+  const foreignPlayerAwards = foreignPlayerDetailId ? yearlyAwardRows.filter((row) => row.foreignPlayerId === foreignPlayerDetailId) : [];
   const existingTeamSummaries = useMemo(() => createExistingTeamSummaries(teams, existingPlayers, careerPlayers), [careerPlayers, existingPlayers, teams]);
-  const currentRosterRows = useMemo(() => createCurrentRosterRows(selectedTeam, existingPlayers, careerPlayers, foreignContracts, foreignPlayers, foreignMarketYear), [careerPlayers, existingPlayers, foreignContracts, foreignMarketYear, foreignPlayers, selectedTeam]);
-  const teamCycleSummary = useMemo(() => createTeamCycleSummary(selectedTeam, existingPlayers, careerPlayers), [careerPlayers, existingPlayers, selectedTeam]);
+  const currentRosterView = useMemo(() => createKboRosterView(selectedTeam, existingPlayers, careerPlayers, foreignContracts, foreignPlayers, foreignMarketYear), [careerPlayers, existingPlayers, foreignContracts, foreignMarketYear, foreignPlayers, selectedTeam]);
+  const teamCycleSummary = useMemo(() => createTeamCycleSummary(selectedTeam, existingPlayers, careerPlayers, foreignContracts, foreignPlayers, foreignMarketYear), [careerPlayers, existingPlayers, foreignContracts, foreignMarketYear, foreignPlayers, selectedTeam]);
   const latestSeasonYear = Math.max(0, ...seasonResults.map((result) => result.yearIndex));
   const latestSeasonResults = seasonResults.filter((result) => result.yearIndex === latestSeasonYear);
   const latestPostseasonRows = useMemo(() => createPostseasonRows(latestSeasonResults, teams), [latestSeasonResults, teams]);
@@ -539,10 +556,11 @@ function App() {
         : "1년 진행";
   const primaryProgressDisabled =
     developerScoutingMode ||
+    Boolean(seasonProgress && seasonProgress.status !== "complete") ||
     phase === "team-selection" ||
     phase === "generating" ||
     (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
-  const fullAutoDisabled = developerScoutingMode || phase === "team-selection" || phase === "generating" || (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
+  const fullAutoDisabled = developerScoutingMode || Boolean(seasonProgress && seasonProgress.status !== "complete") || phase === "team-selection" || phase === "generating" || (currentDraftHasSeasonResult && nextDraftPicks.length === 0);
   const currentSaveState = useMemo<AppSaveState>(
     () => ({
       scoutName,
@@ -554,6 +572,8 @@ function App() {
       userTeamId,
       selections,
       notifications,
+      seasonProgress,
+      seasonActionAlerts,
       predraftIntelEvents,
       predraftUserAction,
       predraftStageIndex,
@@ -571,7 +591,7 @@ function App() {
       needHistory,
       legacyEndingSeen,
     }),
-    [activeTab, careerNews, careerPlayers, careerStartYear, careerYear, draftTimeoutReports, draftTimeoutsUsed, dynamicTeams, existingPlayers, game, legacyEndingSeen, needHistory, nextDraftPicks, notifications, phase, pickTradeEvents, predraftIntelEvents, predraftStageIndex, predraftUserAction, scoutName, seasonResults, selectedCareerId, selections, teamTradeStrengthAdjustments, userTeamId],
+    [activeTab, careerNews, careerPlayers, careerStartYear, careerYear, draftTimeoutReports, draftTimeoutsUsed, dynamicTeams, existingPlayers, game, legacyEndingSeen, needHistory, nextDraftPicks, notifications, phase, pickTradeEvents, predraftIntelEvents, predraftStageIndex, predraftUserAction, scoutName, seasonActionAlerts, seasonProgress, seasonResults, selectedCareerId, selections, teamTradeStrengthAdjustments, userTeamId],
   );
 
   useEffect(() => {
@@ -608,6 +628,35 @@ function App() {
     const timeout = window.setTimeout(() => setDraftPickToast(undefined), 1150);
     return () => window.clearTimeout(timeout);
   }, [draftPickToast]);
+
+  useEffect(() => {
+    if (!seasonProgress || seasonProgress.status !== "running") return undefined;
+    const unresolvedDecision = seasonActionAlerts.some((alert) => !alert.resolved && alert.priority === "decision" && alert.seasonYear === seasonProgress.seasonYear);
+    if (unresolvedDecision) {
+      setSeasonProgress((current) => current ? { ...current, status: "blocked" } : current);
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => {
+      const nextIndex = seasonProgress.checkpointIndex + 1;
+      if (nextIndex < SEASON_CHECKPOINTS.length) {
+        const checkpoint = SEASON_CHECKPOINTS[nextIndex];
+        setSeasonProgress((current) => current ? {
+          ...current,
+          checkpointIndex: nextIndex,
+          logs: [...current.logs, { checkpoint: checkpoint.id, label: checkpoint.label, message: checkpoint.message }],
+        } : current);
+        return;
+      }
+      const generatedNews = simulateCareerYear(selections, careerPlayers, prospects, careerYear + 1);
+      setSeasonProgress((current) => current ? { ...current, status: "complete", generatedNewsIds: generatedNews.map((item) => item.id) } : current);
+      if (careerYear + 1 - careerStartYear >= 50 && !legacyEndingSeen) {
+        setShowLegacyModal(true);
+        setLegacyEndingSeen(true);
+      }
+      setActiveTab("tracking");
+    }, 850);
+    return () => window.clearTimeout(timeout);
+  }, [careerPlayers, careerStartYear, careerYear, legacyEndingSeen, prospects, seasonActionAlerts, seasonProgress, selections]);
 
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
@@ -730,6 +779,8 @@ function App() {
     setUserTeamId(saved.userTeamId);
     setSelections(saved.selections ?? []);
     setNotifications(message ? [message, ...(saved.notifications ?? []).slice(0, 4)] : saved.notifications ?? []);
+    setSeasonProgress(saved.seasonProgress);
+    setSeasonActionAlerts(saved.seasonActionAlerts ?? []);
     setPredraftIntelEvents(saved.predraftIntelEvents ?? []);
     setPredraftUserAction(saved.predraftUserAction);
     setPredraftStageIndex(saved.predraftStageIndex ?? (saved.predraftUserAction ? PREDRAFT_STAGES.length : 0));
@@ -1317,7 +1368,7 @@ function App() {
       openNextDraftYear();
       return;
     }
-    autoAdvanceOneYear();
+    autoAdvanceOneYear(false);
   }
 
   function openNextDraftYear() {
@@ -1339,7 +1390,7 @@ function App() {
     setNotifications((items) => [`${draftYear}년 드래프트 클래스로 이동했습니다. 드래프트 전 동향을 확인한 뒤 시작할 수 있습니다.`, ...items.slice(0, 4)]);
   }
 
-  function autoAdvanceOneYear() {
+  function autoAdvanceOneYear(completeForeignMarket = true) {
     if (!userTeamId || phase === "team-selection" || phase === "generating") return;
     if (phase === "complete" && currentDraftAlreadySimulated(selections)) {
       openNextDraftYear();
@@ -1347,8 +1398,6 @@ function App() {
     }
 
     let completedSelections = selections;
-    let prospectPool = prospects;
-    const nextCareerYear = careerYear + 1;
 
     completedSelections = phase === "complete" ? selections : completeDraftAutomatically(selections);
     if (phase !== "complete") {
@@ -1356,13 +1405,22 @@ function App() {
       setNotifications((items) => [`남은 지명을 자동 완료하고 ${completedSelections.length}명 드래프트 결과로 1년을 진행했습니다.`, ...items.slice(0, 4)]);
     }
 
-    setPhase("complete");
-    simulateCareerYear(completedSelections, careerPlayers, prospectPool, nextCareerYear);
-    if (nextCareerYear - careerStartYear >= 50 && !legacyEndingSeen) {
-      setShowLegacyModal(true);
-      setLegacyEndingSeen(true);
+    if (completeForeignMarket && game) {
+      const automatedForeignMarket = completeForeignRecruitmentWithRetry(game, teams);
+      setGame(automatedForeignMarket.game);
+      if (automatedForeignMarket.userSignings.length > 0) {
+        setNotifications((items) => [`운영팀이 용병 시장을 자동 완료했습니다: ${automatedForeignMarket.userSignings.join(", ")}`, ...items].slice(0, 8));
+      }
     }
-    setActiveTab("tracking");
+
+    setPhase("complete");
+    const opening = SEASON_CHECKPOINTS[0];
+    setSeasonProgress({
+      seasonYear: completedSelections[0]?.pick.year ?? game?.currentYear ?? 2026,
+      checkpointIndex: 0,
+      status: "running",
+      logs: [{ checkpoint: opening.id, label: opening.label, message: opening.message }],
+    });
   }
 
   function handlePrimaryProgressAction() {
@@ -1431,10 +1489,26 @@ function App() {
     let needs = createNeedSnapshots(baseGame.currentYear - 1, leagueTeams);
     let trades: PickTradeEvent[] = [];
     let strengthAdjustments: Record<string, number> = {};
+    const initialForeignMarket = Object.values(baseGame.foreignPlayersById ?? {});
+    let foreignGame: GameState = {
+      ...baseGame,
+      foreignPlayerMarketYear: baseGame.currentYear,
+      foreignPlayersById: Object.fromEntries((initialForeignMarket.length > 0
+        ? initialForeignMarket
+        : generateForeignPlayerMarket(createSeededRng(`${seed}-foreign-market-${baseGame.currentYear}`), baseGame.currentYear))
+        .map((player) => [player.id, player])),
+      foreignContractsById: {},
+      foreignContractOffersById: {},
+      foreignRecruitmentByYear: {},
+      foreignRecruitmentDecisionsByYear: {},
+      foreignRosterDecisionsByYear: {},
+    };
 
     for (let offset = 0; offset < ESTABLISHED_LEAGUE_YEARS; offset += 1) {
       const seasonYear = baseGame.currentYear + offset;
       const yearIndex = offset + 1;
+      foreignGame = completeForeignRecruitmentWithRetry({ ...foreignGame, currentYear: seasonYear, foreignPlayerMarketYear: seasonYear, teams: leagueTeams }, leagueTeams).game;
+      let foreignContracts = Object.values(foreignGame.foreignContractsById ?? {});
       const eligible = prospectPool.filter((prospect) => isDraftEligibleProspect(prospect, seasonYear));
       const draftSelections = completeDraftAutomatically([], picks, eligible, leagueTeams);
       players = [...players, ...createInitialCareerPlayers(draftSelections)];
@@ -1460,11 +1534,32 @@ function App() {
       leagueExistingPlayers = advanceExistingPlayers(leagueExistingPlayers, yearIndex);
 
       const previousResults = results.filter((result) => result.yearIndex === yearIndex - 1);
-      const seasonResults = simulateTeamSeason(leagueTeams, draftSelections, players, leagueExistingPlayers, seasonYear, yearIndex, previousResults, strengthAdjustments);
-      players = simulateProSeasonStats(players, seasonResults, leagueExistingPlayers, seasonYear, yearIndex);
+      const seasonResults = simulateTeamSeason(leagueTeams, draftSelections, players, leagueExistingPlayers, seasonYear, yearIndex, previousResults, strengthAdjustments, foreignContracts);
+      const simulatedForeignContracts = simulateForeignContractSeasons(
+        foreignContracts,
+        Object.values(foreignGame.foreignPlayersById ?? {}),
+        seasonYear,
+        createSeededRng(`${seed}-established-foreign-season-${seasonYear}`),
+      );
+      const foreignRosterResolution = resolveForeignRosterDecisions(
+        simulatedForeignContracts,
+        leagueTeams,
+        seasonYear,
+        createSeededRng(`${seed}-established-foreign-decisions-${seasonYear}`),
+      );
+      foreignContracts = foreignRosterResolution.contracts;
+      foreignGame = {
+        ...foreignGame,
+        foreignContractsById: Object.fromEntries(foreignContracts.map((contract) => [contract.id, contract])),
+        foreignRosterDecisionsByYear: {
+          ...(foreignGame.foreignRosterDecisionsByYear ?? {}),
+          [seasonYear]: foreignRosterResolution.decisions,
+        },
+      };
+      players = simulateProSeasonStats(players, seasonResults, leagueExistingPlayers, seasonYear, yearIndex, foreignContracts);
       awardSingleRookieOfYear(players, yearIndex, teamId, watchedIds, missedIds, warmupNews);
-      applySeasonAwardAchievements(players, createAwardRowsForSeason(seasonYear, yearIndex, players, leagueTeams, leagueExistingPlayers, seasonResults), yearIndex, teamId, watchedIds, missedIds, warmupNews);
-      addSeasonSelectionHonors(players, leagueExistingPlayers, leagueTeams, yearIndex, seasonYear, teamId, watchedIds, missedIds, warmupNews, seasonResults);
+      applySeasonAwardAchievements(players, createAwardRowsForSeason(seasonYear, yearIndex, players, leagueTeams, leagueExistingPlayers, seasonResults, foreignContracts), yearIndex, teamId, watchedIds, missedIds, warmupNews);
+      addSeasonSelectionHonors(players, leagueExistingPlayers, leagueTeams, yearIndex, seasonYear, teamId, watchedIds, missedIds, warmupNews, seasonResults, foreignContracts);
       results = [...results, ...seasonResults];
 
       const needsUpdate = updateTeamNeedsAfterSeason(leagueTeams, players, seasonYear);
@@ -1489,6 +1584,18 @@ function App() {
       const advancedPool = advanceHighSchoolPlayerPool(poolRng, nextYear, baseGame.settings.prospectsPerYear, prospectPool, schools);
       prospectPool = advancedPool.prospects;
       classQuality = advancedPool.classQuality;
+      const nextForeignMarket = rolloverForeignPlayerMarket(
+        Object.values(foreignGame.foreignPlayersById ?? {}),
+        foreignContracts,
+        nextYear,
+        createSeededRng(`${seed}-established-foreign-market-${nextYear}`),
+      );
+      foreignGame = {
+        ...foreignGame,
+        currentYear: nextYear,
+        foreignPlayerMarketYear: nextYear,
+        foreignPlayersById: Object.fromEntries(nextForeignMarket.map((player) => [player.id, player])),
+      };
     }
 
     players = players.map((player) => {
@@ -1504,7 +1611,7 @@ function App() {
 
     const currentYear = baseGame.currentYear + ESTABLISHED_LEAGUE_YEARS;
     const currentDraftProspects = prospectPool.filter((prospect) => isDraftEligibleProspect(prospect, currentYear));
-    const foreignMarket = generateForeignPlayerMarket(createSeededRng(`${seed}-foreign-market-${currentYear}`), currentYear);
+    foreignGame = completeForeignRecruitmentWithRetry({ ...foreignGame, currentYear, foreignPlayerMarketYear: currentYear, teams: leagueTeams }, leagueTeams).game;
     const gameState: GameState = {
       ...baseGame,
       turn: ESTABLISHED_LEAGUE_YEARS,
@@ -1514,7 +1621,12 @@ function App() {
       teams: leagueTeams,
       prospectsById: Object.fromEntries(prospectPool.map((prospect) => [prospect.id, prospect])),
       foreignPlayerMarketYear: currentYear,
-      foreignPlayersById: Object.fromEntries(foreignMarket.map((player) => [player.id, player])),
+      foreignPlayersById: foreignGame.foreignPlayersById,
+      foreignContractsById: foreignGame.foreignContractsById,
+      foreignContractOffersById: foreignGame.foreignContractOffersById,
+      foreignRecruitmentByYear: foreignGame.foreignRecruitmentByYear,
+      foreignRecruitmentDecisionsByYear: foreignGame.foreignRecruitmentDecisionsByYear,
+      foreignRosterDecisionsByYear: foreignGame.foreignRosterDecisionsByYear,
       draftClassProfilesByYear: classQuality ? { [currentYear]: classQuality } : {},
       draftClassesByYear: { [currentYear]: currentDraftProspects.map((prospect) => prospect.id) },
       draftPicksByYear: { [currentYear]: picks },
@@ -1611,7 +1723,7 @@ function App() {
   }
 
   function simulateCareerYear(selectionSource: DraftSelectionView[], careerPlayerSource: CareerPlayerState[], prospectPool = prospects, nextYearOverride?: number) {
-    if (!userTeamId) return;
+    if (!userTeamId) return [];
 
     const existingCareerIds = new Set(careerPlayerSource.map((player) => player.playerId));
     const newCareerSelections = selectionSource.filter((selection) => !existingCareerIds.has(selection.prospect.id));
@@ -1635,9 +1747,10 @@ function App() {
     let rosterLimitedPlayers = assignBullpenRoles(roleAdjustedPlayers, teams);
     const nextExistingPlayers = advanceExistingPlayers(existingPlayers.length > 0 ? existingPlayers : createInitialExistingPlayers(teams), nextYear);
     const previousResults = seasonResults.filter((result) => result.yearIndex === careerYear);
-    const nextSeasonResults = simulateTeamSeason(teams, selectionSource, rosterLimitedPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments);
+    const currentForeignContracts = Object.values(game?.foreignContractsById ?? {});
+    const nextSeasonResults = simulateTeamSeason(teams, selectionSource, rosterLimitedPlayers, nextExistingPlayers, seasonYear, nextYear, previousResults, teamTradeStrengthAdjustments, currentForeignContracts);
     const simulatedForeignContracts = simulateForeignContractSeasons(
-      Object.values(game?.foreignContractsById ?? {}),
+      currentForeignContracts,
       Object.values(game?.foreignPlayersById ?? {}),
       seasonYear,
       createSeededRng(`${game?.seed ?? "foreign"}-foreign-season-${seasonYear}`),
@@ -1652,10 +1765,10 @@ function App() {
     const foreignDepartureMessages = nextForeignContracts
       .filter((contract) => contract.teamId === userTeamId && contract.status === "overseas-departed" && contract.endedYear === seasonYear)
       .map((contract) => `${contract.playerSnapshot?.name ?? "외국인 선수"}, ${contract.overseasDestination ?? "해외 리그"} 진출을 위해 팀을 떠났습니다.`);
-    rosterLimitedPlayers = simulateProSeasonStats(rosterLimitedPlayers, nextSeasonResults, nextExistingPlayers, seasonYear, nextYear);
+    rosterLimitedPlayers = simulateProSeasonStats(rosterLimitedPlayers, nextSeasonResults, nextExistingPlayers, seasonYear, nextYear, nextForeignContracts);
     awardSingleRookieOfYear(rosterLimitedPlayers, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
-    applySeasonAwardAchievements(rosterLimitedPlayers, createAwardRowsForSeason(seasonYear, nextYear, rosterLimitedPlayers, teams, nextExistingPlayers, nextSeasonResults), nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
-    addSeasonSelectionHonors(rosterLimitedPlayers, nextExistingPlayers, teams, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news, nextSeasonResults);
+    applySeasonAwardAchievements(rosterLimitedPlayers, createAwardRowsForSeason(seasonYear, nextYear, rosterLimitedPlayers, teams, nextExistingPlayers, nextSeasonResults, nextForeignContracts), nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
+    addSeasonSelectionHonors(rosterLimitedPlayers, nextExistingPlayers, teams, nextYear, seasonYear, userTeamId, watchedIds, nextAfterUserPickIds, news, nextSeasonResults, nextForeignContracts);
     const nextPlayers = applyDefaultTrackingAfterSeason(rosterLimitedPlayers, userTeamId, nextYear);
     applyOverseasShowcaseEvents(nextPlayers, nextSeasonResults, seasonResults, seasonYear, nextYear, userTeamId, watchedIds, nextAfterUserPickIds, news);
     const nextYearPicks = createNextDraftPicksFromSeason(nextSeasonResults, seasonYear + 1, game?.settings.rounds ?? 10);
@@ -1693,6 +1806,7 @@ function App() {
     if (!selectedCareerId && nextPlayers[0]) {
       setSelectedCareerId(nextPlayers[0].playerId);
     }
+    return curatedNews;
   }
 
   function updateTrackingStatus(playerId: ProspectId, status: TrackingStatus) {
@@ -1766,6 +1880,16 @@ function App() {
     return userPlayerRowClass(careerPlayers.find((candidate) => candidate.playerId === playerId));
   }
 
+  function historyRowClass(playerId: ProspectId | undefined, teamName: string): string {
+    return userLegacyRowClass(playerId) || (selectedTeam?.name === teamName ? "user-team-row" : "");
+  }
+
+  function historyPlayerName(playerName: string, playerId?: ProspectId, foreignPlayerId?: ForeignPlayerId) {
+    if (playerId) return <button className="link-button" onClick={() => setDetailPlayerId(playerId)}>{playerName}</button>;
+    if (foreignPlayerId) return <button className="link-button" onClick={() => setForeignPlayerDetailId(foreignPlayerId)}>{playerName}</button>;
+    return playerName;
+  }
+
   function toggleForeignShortlist(playerId: ForeignPlayerId) {
     setGame((current) => {
       if (!current) return current;
@@ -1781,6 +1905,90 @@ function App() {
     setForeignOfferSalary(Math.round(((player.visible.expectedSalaryUsd.min + player.visible.expectedSalaryUsd.max) / 2) / 10000) * 10000);
     setForeignOfferYears(1);
     setForeignOfferRole(defaultForeignOfferRole(player));
+  }
+
+  function completeForeignRecruitmentAutomatically(sourceGame: GameState, teamPool: Team[]): { game: GameState; userSignings: string[] } {
+    const year = sourceGame.foreignPlayerMarketYear ?? sourceGame.currentYear;
+    let state = sourceGame.foreignRecruitmentByYear?.[year] ?? createForeignRecruitmentState(year, teamPool.map((team) => team.id));
+    if (state.status === "complete") return { game: sourceGame, userSignings: [] };
+    let candidates = Object.values(sourceGame.foreignPlayersById ?? {});
+    let contracts = Object.values(sourceGame.foreignContractsById ?? {});
+    let offers = Object.values(sourceGame.foreignContractOffersById ?? {});
+    let decisions = [...(sourceGame.foreignRecruitmentDecisionsByYear?.[year] ?? [])];
+    const userSignings: string[] = [];
+    let guard = 0;
+
+    while (state.status === "open" && guard < state.maxRounds) {
+      guard += 1;
+      const round = state.currentRound;
+      const roundOffers = generateCpuForeignOffers({
+        year,
+        round,
+        teams: teamPool,
+        teamIds: state.pendingTeamIds,
+        candidates,
+        contracts,
+        previousOffers: offers,
+        rng: createSeededRng(`${sourceGame.seed}-foreign-auto-offers-${year}-${round}`),
+      }).offers;
+      if (roundOffers.length === 0) {
+        state = { ...state, status: "complete", pendingTeamIds: [] };
+        break;
+      }
+      const result = resolveForeignRecruitmentRound({
+        year,
+        round,
+        teams: teamPool,
+        candidates,
+        existingContracts: contracts,
+        offers: roundOffers,
+        rng: createSeededRng(`${sourceGame.seed}-foreign-auto-decisions-${year}-${round}`),
+      });
+      const signedById = new Map(result.signedCandidates.map((candidate) => [candidate.id, candidate]));
+      candidates = candidates.map((candidate) => signedById.get(candidate.id) ?? candidate);
+      contracts = [...contracts, ...result.contracts];
+      offers = [...offers, ...result.offers];
+      decisions = [...decisions, ...result.decisions];
+      result.contracts.filter((contract) => contract.teamId === userTeamId).forEach((contract) => {
+        const player = signedById.get(contract.playerId) ?? contract.playerSnapshot;
+        if (player) userSignings.push(`${player.name}(${positionLabel(player.primaryPosition)})`);
+      });
+      state = advanceForeignRecruitmentState(state, result);
+    }
+
+    return {
+      userSignings,
+      game: {
+        ...sourceGame,
+        foreignPlayersById: Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate])),
+        foreignContractsById: Object.fromEntries(contracts.map((contract) => [contract.id, contract])),
+        foreignContractOffersById: Object.fromEntries(offers.map((offer) => [offer.id, offer])),
+        foreignRecruitmentByYear: { ...(sourceGame.foreignRecruitmentByYear ?? {}), [year]: state },
+        foreignRecruitmentDecisionsByYear: { ...(sourceGame.foreignRecruitmentDecisionsByYear ?? {}), [year]: decisions },
+      },
+    };
+  }
+
+  function completeForeignRecruitmentWithRetry(sourceGame: GameState, teamPool: Team[]): { game: GameState; userSignings: string[] } {
+    const firstPass = completeForeignRecruitmentAutomatically(sourceGame, teamPool);
+    const year = firstPass.game.foreignPlayerMarketYear ?? firstPass.game.currentYear;
+    const contracts = Object.values(firstPass.game.foreignContractsById ?? {});
+    const underfilledTeamIds = teamPool
+      .map((team) => team.id)
+      .filter((teamId) => {
+        const usage = getForeignRosterUsage(contracts, teamId, year);
+        return usage.standard < 3 || usage.asianQuota < 1;
+      });
+    if (underfilledTeamIds.length === 0) return firstPass;
+    const retryGame: GameState = {
+      ...firstPass.game,
+      foreignRecruitmentByYear: {
+        ...(firstPass.game.foreignRecruitmentByYear ?? {}),
+        [year]: createForeignRecruitmentState(year, underfilledTeamIds, 12),
+      },
+    };
+    const retry = completeForeignRecruitmentAutomatically(retryGame, teamPool);
+    return { game: retry.game, userSignings: [...firstPass.userSignings, ...retry.userSignings] };
   }
 
   function processForeignRecruitmentRound() {
@@ -1873,7 +2081,7 @@ function App() {
               <button className="primary-progress-button" disabled={primaryProgressDisabled || isPickSequenceRunning} onClick={handlePrimaryProgressAction}>
                 {primaryProgressLabel}
               </button>
-              <button className="quick-year-button" disabled={fullAutoDisabled || isPickSequenceRunning} onClick={autoAdvanceOneYear}>
+              <button className="quick-year-button" disabled={fullAutoDisabled || isPickSequenceRunning} onClick={() => autoAdvanceOneYear(true)}>
                 한해 완전 자동
               </button>
             </>
@@ -1892,6 +2100,17 @@ function App() {
       {!showStartScreen && phase === "generating" && <GeneratingModal count={totalProspects} established={careerStartMode === "established"} />}
 
       {showLegacyModal && <LegacyEndingModal summary={legacySummary} onImmortal={chooseImmortality} onReincarnate={reincarnateCareer} />}
+
+      {seasonProgress && <SeasonProgressModal
+        progress={seasonProgress}
+        alerts={seasonActionAlerts.filter((alert) => alert.seasonYear === seasonProgress.seasonYear)}
+        news={careerNews.filter((item) => seasonProgress.generatedNewsIds?.includes(item.id))}
+        onPause={() => setSeasonProgress((current) => current ? { ...current, status: "paused" } : current)}
+        onContinue={() => setSeasonProgress((current) => current ? { ...current, status: "running" } : current)}
+        onSkip={() => setSeasonProgress((current) => current ? { ...current, checkpointIndex: SEASON_CHECKPOINTS.length - 1, logs: SEASON_CHECKPOINTS.map((checkpoint) => ({ checkpoint: checkpoint.id, label: checkpoint.label, message: checkpoint.message })) } : current)}
+        onResolveAlert={(id) => setSeasonActionAlerts((items) => items.map((item) => item.id === id ? { ...item, resolved: true } : item))}
+        onClose={() => setSeasonProgress(undefined)}
+      />}
 
       {phase !== "team-selection" && phase !== "generating" && selected && (
         <>
@@ -1930,7 +2149,7 @@ function App() {
                         const latestSeason = contract.seasonHistory?.[contract.seasonHistory.length - 1];
                         return <button key={contract.id} onClick={() => player && setForeignPlayerDetailId(player.id)}>
                           <strong>{player?.name ?? contract.playerId}</strong>
-                          <span>{foreignSlotLabel(contract.slotType)} · {foreignRoleLabel(contract.guaranteedRole)} · {Math.round(contract.annualSalaryUsd / 10000)}만 달러</span>
+                          <span>{foreignSlotLabel(contract.slotType)} · {foreignRoleLabel(contract.currentRole ?? contract.guaranteedRole)} · {Math.round(contract.annualSalaryUsd / 10000)}만 달러{contract.rolePromiseStatus === "protected" ? " · 보장 유예" : contract.dissatisfaction ? ` · 불만 ${contract.dissatisfaction}` : ""}</span>
                           {latestSeason && <span>{foreignKboStatLine(latestSeason.stats)} · 적응 {latestSeason.actualAdaptation} · {foreignRetentionLabel(contract.latestRetentionEvaluation?.recommendation)}</span>}
                         </button>;
                       })}
@@ -2041,7 +2260,7 @@ function App() {
                   <button className="text-button" disabled={isPickSequenceRunning || (phase !== "pre-draft" && phase !== "draft")} onClick={handlePrimaryProgressAction}>
                     {phase === "pre-draft" ? primaryProgressLabel : "드래프트 전체 자동"}
                   </button>
-                  <button className="text-button" disabled={fullAutoDisabled} onClick={autoAdvanceOneYear}>
+                  <button className="text-button" disabled={fullAutoDisabled} onClick={() => autoAdvanceOneYear(true)}>
                     한 해 완전 자동
                   </button>
                   {phase === "complete" && (
@@ -2250,42 +2469,63 @@ function App() {
             <div className="career-head">
               <div>
                 <h2>현 로스터 구성</h2>
-                <p>드래프트 출신, 기존 선수층과 계약한 외국인 선수를 실효 OVR 기준으로 주전, 플래툰, 2군 역할에 배치합니다.</p>
+                <p>2026 KBO 기준 1군 등록 29명 중 경기 출장 가능 인원은 28명입니다. 선수는 현재 보직과 실효 OVR을 기준으로 배치합니다.</p>
               </div>
               <CollapseButton collapsed={isCollapsed("current-roster")} onClick={() => toggleCollapsed("current-roster")} />
             </div>
             {!isCollapsed("current-roster") && (
-              <div className="standings-wrap roster-wrap">
-                <table className="roster-table">
-                  <thead>
-                    <tr>
-                      <th>포지션</th>
-                      <th>주전</th>
-                      <th>플래툰/백업</th>
-                      <th>2군/육성</th>
-                      <th>부상/군복무</th>
-                      <th>드래프트 출신</th>
-                      <th>기존 선수층</th>
-                      <th>외국인</th>
-                      <th>보강 필요도</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentRosterRows.map((row) => (
-                      <tr key={row.position}>
-                        <td><span className={`pos pos-${row.position}`}>{positionLabel(row.position)}</span></td>
-                        <td>{row.starters.length ? row.starters.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">공백</span>}</td>
-                        <td>{row.platoon.length ? row.platoon.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">부족</span>}</td>
-                        <td>{row.secondTeam.length ? row.secondTeam.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">얇음</span>}</td>
-                        <td>{row.inactive.length ? row.inactive.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />) : <span className="muted">없음</span>}</td>
-                        <td className="num">{row.draftedCount}</td>
-                        <td className="num">{row.existingCount}</td>
-                        <td className="num">{row.foreignCount}</td>
-                        <td><span className={`need-badge need-${needLevel(row.need)}`}>{needLevelLabel(row.need)} {row.need}</span></td>
-                      </tr>
+              <div className="kbo-roster-view">
+                <div className="kbo-roster-summary" aria-label="로스터 인원 요약">
+                  <span><small>1군 등록</small><strong>{currentRosterView.firstTeamCount}/29명</strong></span>
+                  <span><small>당일 출장</small><strong>최대 28명</strong></span>
+                  <span><small>2군·육성</small><strong>{currentRosterView.secondTeamCount}명</strong></span>
+                  <span><small>부상·군복무</small><strong>{currentRosterView.inactive.length}명</strong></span>
+                  <span><small>1군 구성</small><strong>드래프트 {currentRosterView.sourceCounts.drafted} · 기존 {currentRosterView.sourceCounts.existing} · 외국인 {currentRosterView.sourceCounts.foreign}</strong></span>
+                </div>
+
+                <section className="kbo-roster-block first-team-roster">
+                  <div className="kbo-roster-block-head">
+                    <div><h3>1군 엔트리</h3><p>선발 로테이션, 불펜 보직과 야수 주전·백업을 한 번에 확인합니다.</p></div>
+                    <div className="roster-source-legend"><span data-source="drafted">드래프트 출신</span><span data-source="existing">기존 선수</span><span data-source="foreign">외국인</span></div>
+                  </div>
+                  <div className="kbo-depth-grid">
+                    {currentRosterView.firstTeam.map((group) => (
+                      <section className="kbo-depth-group" data-position={group.position} key={group.position}>
+                        <header><span className={`pos pos-${group.position}`}>{group.label}</span><b>{group.members.length}명</b></header>
+                        <div className="kbo-depth-members">
+                          {group.members.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />)}
+                        </div>
+                      </section>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </section>
+
+                <section className="kbo-roster-block second-team-roster">
+                  <div className="kbo-roster-block-head">
+                    <div><h3>2군·육성 선수</h3><p>1군 엔트리 밖의 가용 선수입니다. 포지션별 대체 자원과 선수층을 확인할 수 있습니다.</p></div>
+                    <strong>{currentRosterView.secondTeamCount}명</strong>
+                  </div>
+                  {currentRosterView.secondTeam.length > 0 ? <div className="kbo-depth-grid kbo-depth-grid-secondary">
+                    {currentRosterView.secondTeam.map((group) => (
+                      <section className="kbo-depth-group" data-position={group.position} key={group.position}>
+                        <header><span className={`pos pos-${group.position}`}>{group.label}</span><b>{group.members.length}명</b></header>
+                        <div className="kbo-depth-members">
+                          {group.members.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />)}
+                        </div>
+                      </section>
+                    ))}
+                  </div> : <p className="empty">2군 또는 육성 상태의 선수가 없습니다.</p>}
+                </section>
+
+                <section className="kbo-roster-block inactive-roster">
+                  <div className="kbo-roster-block-head">
+                    <div><h3>부상자·군복무</h3><p>부상자 명단, 현역 복무와 상무 소속 선수를 1군·2군 가용 인원에서 분리합니다.</p></div>
+                    <strong>{currentRosterView.inactive.length}명</strong>
+                  </div>
+                  {currentRosterView.inactive.length > 0 ? <div className="kbo-inactive-list">
+                    {currentRosterView.inactive.map((member) => <RosterMemberButton member={member} key={member.id} onSelect={setDetailPlayerId} onSelectForeign={setForeignPlayerDetailId} />)}
+                  </div> : <p className="empty">현재 부상 또는 군복무로 이탈한 선수가 없습니다.</p>}
+                </section>
               </div>
             )}
           </section>}
@@ -3085,6 +3325,7 @@ function App() {
                               <th>드래프트</th>
                               <th>유망주 기여</th>
                               <th>주전 배출</th>
+                              <th>외국인</th>
                               <th>부상</th>
                               <th>지명권</th>
                               <th>변동</th>
@@ -3108,6 +3349,7 @@ function App() {
                                   <td className="num">{formatSigned(result.draftImpact)}</td>
                                   <td className="num">{formatSigned(result.prospectContribution)}</td>
                                   <td className="num">{formatSigned(result.regularContribution)}</td>
+                                  <td className="num">{formatSigned(result.foreignContribution ?? 0)}</td>
                                   <td className="num">{formatSigned(-result.injuryPenalty)}</td>
                                   <td className="num">{formatSigned(result.pickTradeImpact)}</td>
                                   <td className="num">{formatSigned(result.randomSwing)}</td>
@@ -3470,10 +3712,10 @@ function App() {
                           </thead>
                           <tbody>
                             {activeAwardGoldGloveRows.map((row) => (
-                              <tr key={row.id} className={userLegacyRowClass(row.playerId)}>
+                              <tr key={row.id} className={historyRowClass(row.playerId, row.teamName)}>
                                 <td>{row.category}</td>
                                 <td>{row.teamName}</td>
-                                <td>{row.playerId ? <button className="link-button" onClick={() => row.playerId && setDetailPlayerId(row.playerId)}>{row.playerName}</button> : row.playerName}</td>
+                                <td>{historyPlayerName(row.playerName, row.playerId, row.foreignPlayerId)}</td>
                                 <td>{row.note}</td>
                               </tr>
                             ))}
@@ -3483,10 +3725,10 @@ function App() {
                               </tr>
                             )}
                             {activeAwardTitleRows.map((row) => (
-                              <tr key={row.id} className={userLegacyRowClass(row.playerId)}>
+                              <tr key={row.id} className={historyRowClass(row.playerId, row.teamName)}>
                                 <td>{row.category}</td>
                                 <td>{row.teamName}</td>
-                                <td>{row.playerId ? <button className="link-button" onClick={() => row.playerId && setDetailPlayerId(row.playerId)}>{row.playerName}</button> : row.playerName}</td>
+                                <td>{historyPlayerName(row.playerName, row.playerId, row.foreignPlayerId)}</td>
                                 <td>{row.note}</td>
                               </tr>
                             ))}
@@ -3530,12 +3772,12 @@ function App() {
                                     <td colSpan={6}>{row.group}</td>
                                   </tr>
                                 )}
-                                <tr className={userLegacyRowClass(row.playerId)}>
+                                <tr className={historyRowClass(row.playerId, row.teamName)}>
                                   <td className="num">{row.seasonYear}</td>
                                   <td>{row.group}</td>
                                   <td>{row.category ?? "-"}</td>
                                   <td>{row.teamName}</td>
-                                  <td>{row.playerId ? <button className="link-button" onClick={() => row.playerId && setDetailPlayerId(row.playerId)}>{row.playerName}</button> : row.playerName}</td>
+                                  <td>{historyPlayerName(row.playerName, row.playerId, row.foreignPlayerId)}</td>
                                   <td>{row.note}</td>
                                 </tr>
                               </Fragment>
@@ -3885,7 +4127,7 @@ function App() {
           )}
 
           {foreignPlayerDetail && (
-            <ForeignPlayerModal player={foreignPlayerDetail} contract={foreignPlayerDetailContract} onClose={() => setForeignPlayerDetailId("")} />
+            <ForeignPlayerModal player={foreignPlayerDetail} contract={foreignPlayerDetailContract} awards={foreignPlayerAwards} onClose={() => setForeignPlayerDetailId("")} />
           )}
 
           {detailCareerPlayer && (
@@ -4400,7 +4642,7 @@ function foreignRoleLabel(role: ForeignGuaranteedRole): string {
   if (role === "bullpen") return "불펜 보장";
   if (role === "flexible-pitcher") return "투수 보직 협의";
   if (role === "everyday-player") return "주전 보장";
-  if (role === "platoon-player") return "플래툼";
+  if (role === "platoon-player") return "플래툰";
   return "백업";
 }
 
@@ -4415,9 +4657,18 @@ function foreignRetentionLabel(recommendation?: ForeignRetentionRecommendation):
 function foreignRosterDecisionLabel(decision: ForeignRosterDecisionType): string {
   if (decision === "renewed") return "재계약";
   if (decision === "retained") return "계약 유지";
+  if (decision === "role-downgrade") return "보직 재조정";
   if (decision === "non-renewal") return "재계약 포기";
   if (decision === "waived") return "웨이버 공시";
   return "해외 진출";
+}
+
+function foreignRolePromiseLabel(contract: ForeignContract): string {
+  if (contract.rolePromiseStatus === "protected") return "보장 유예 중";
+  if (contract.rolePromiseStatus === "fulfilled") return "보장 이행";
+  if (contract.rolePromiseStatus === "downgraded") return "유예 종료·보직 강등";
+  if (contract.rolePromiseStatus === "violated") return "계약 약속 미이행";
+  return foreignRolePromiseProtected(contract, contract.startYear) ? "보장 유예 중" : "보직 경쟁";
 }
 
 function foreignKboStatLine(stats: ForeignRecentStats): string {
@@ -4571,6 +4822,7 @@ type RosterMember = {
   note: string;
   bullpenRole?: NonNullable<CareerPlayerState["bullpenRole"]>;
   fieldingRole?: NonNullable<CareerPlayerState["fieldingRole"]>;
+  rosterPriority?: number;
 };
 
 function RosterMemberButton({ member, onSelect, onSelectForeign }: { member: RosterMember; onSelect: (id: ProspectId) => void; onSelectForeign: (id: ForeignPlayerId) => void }) {
@@ -4578,7 +4830,7 @@ function RosterMemberButton({ member, onSelect, onSelectForeign }: { member: Ros
   const content = (
     <>
       <strong>{member.name}</strong>
-      <small>OVR {member.overall}{member.age ? ` · ${member.age}세` : ""} · {note}</small>
+      <small>{positionLabel(member.primaryPosition)} · OVR {member.overall}{member.age ? ` · ${member.age}세` : ""} · {note}</small>
     </>
   );
   if (member.playerId) {
@@ -4898,6 +5150,76 @@ function RoundNotePanel({ currentRound, notes, onChange }: { currentRound: numbe
   );
 }
 
+function SeasonProgressModal({
+  progress,
+  alerts,
+  news,
+  onPause,
+  onContinue,
+  onSkip,
+  onResolveAlert,
+  onClose,
+}: {
+  progress: SeasonProgressState;
+  alerts: SeasonActionAlert[];
+  news: CareerNewsItem[];
+  onPause: () => void;
+  onContinue: () => void;
+  onSkip: () => void;
+  onResolveAlert: (id: string) => void;
+  onClose: () => void;
+}) {
+  const checkpoint = SEASON_CHECKPOINTS[progress.checkpointIndex] ?? SEASON_CHECKPOINTS[SEASON_CHECKPOINTS.length - 1];
+  const unresolvedDecision = alerts.some((alert) => !alert.resolved && alert.priority === "decision");
+  return (
+    <div className="modal-backdrop season-progress-backdrop" role="presentation">
+      <section className="season-progress-modal" role="dialog" aria-modal="true" aria-labelledby="season-progress-title">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">{progress.seasonYear}시즌 진행</span>
+            <h2 id="season-progress-title">{progress.status === "complete" ? "시즌 결산 완료" : checkpoint.label}</h2>
+            <p>{progress.status === "blocked" ? "구단의 진행 전 확인이 필요한 사건이 발생했습니다." : checkpoint.message}</p>
+          </div>
+          <strong>{progress.checkpointIndex + 1}/{SEASON_CHECKPOINTS.length}</strong>
+        </div>
+        <div className="season-progress-track" aria-label="시즌 진행 단계">
+          {SEASON_CHECKPOINTS.map((item, index) => <span key={item.id} data-active={index <= progress.checkpointIndex} data-current={index === progress.checkpointIndex}>{item.label}</span>)}
+        </div>
+        <div className="season-progress-columns">
+          <section>
+            <h3>진행 로그</h3>
+            <div className="season-progress-log">
+              {[...progress.logs].reverse().map((log, index) => <article key={`${log.checkpoint}-${index}`}><span>{log.label}</span><p>{log.message}</p></article>)}
+              {progress.status === "running" && <p className="season-loading-line">다음 체크포인트를 계산하고 있습니다...</p>}
+            </div>
+          </section>
+          <aside>
+            <h3>조치 알림</h3>
+            <div className="season-alert-list">
+              {alerts.length === 0 ? <p className="empty">현재 처리할 알림이 없습니다.</p> : alerts.map((alert) => <article key={alert.id} data-priority={alert.priority} data-resolved={alert.resolved}>
+                <span>{alert.priority === "decision" ? "결정 필요" : alert.priority === "confirm" ? "확인 필요" : "정보"}</span>
+                <strong>{alert.title}</strong>
+                <p>{alert.body}</p>
+                {!alert.resolved && <button className="small-button" onClick={() => onResolveAlert(alert.id)}>확인</button>}
+              </article>)}
+            </div>
+          </aside>
+        </div>
+        {progress.status === "complete" && <section className="season-result-news">
+          <h3>이번 시즌 주요 뉴스</h3>
+          {news.length === 0 ? <p className="empty">기록할 주요 뉴스가 없습니다.</p> : news.slice(0, 10).map((item) => <article key={item.id} data-grade={item.grade}><span>{NEWS_GRADE_LABELS[item.grade]} · {item.type}</span><strong>{item.headline}</strong><p>{item.body}</p></article>)}
+        </section>}
+        <div className="season-progress-actions">
+          {progress.status === "running" && <button className="text-button" onClick={onPause}>일시정지</button>}
+          {(progress.status === "paused" || progress.status === "blocked") && <button className="primary-button" disabled={unresolvedDecision} onClick={onContinue}>계속 진행</button>}
+          {progress.status !== "complete" && <button className="text-button" disabled={progress.status === "blocked"} onClick={onSkip}>결산까지 빠르게 진행</button>}
+          {progress.status === "complete" && <button className="primary-button" onClick={onClose}>결과 확인</button>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function NewsButton({ news, onSelect }: { news: CareerNewsItem; onSelect: (id: ProspectId) => void }) {
   return (
     <button className="news-item" data-emphasis={news.emphasis ?? "normal"} data-grade={news.grade} data-sentiment={newsSentiment(news)} onClick={() => news.playerId && onSelect(news.playerId)}>
@@ -4935,7 +5257,7 @@ function PlayerNewsTimeline({ news, prospects, players, onSelect }: { news: Care
   );
 }
 
-function ForeignPlayerModal({ player, contract, onClose }: { player: ForeignPlayerCandidate; contract?: ForeignContract; onClose: () => void }) {
+function ForeignPlayerModal({ player, contract, awards, onClose }: { player: ForeignPlayerCandidate; contract?: ForeignContract; awards: YearlyAwardRow[]; onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<"career" | "seasons" | "kbo" | "report">("career");
   const totals = createForeignCareerTotals(player);
   return (
@@ -5034,18 +5356,26 @@ function ForeignPlayerModal({ player, contract, onClose }: { player: ForeignPlay
         {activeTab === "kbo" && contract && (
           <div className="modal-detail-grid">
             <section className="detail-block wide-detail-block">
+              <h3>{contract.seasonHistory?.length ? `${contract.seasonHistory[contract.seasonHistory.length - 1].seasonYear} KBO 시즌 사이클` : "KBO 예상 시즌 사이클"}</h3>
+              <SeasonCycleChart cycle={contract.seasonHistory?.[contract.seasonHistory.length - 1]?.formCycle ?? createForeignEstimatedSeasonCycle(player, contract, contract.startYear)} />
+            </section>
+            <section className="detail-block wide-detail-block">
               <h3>KBO 연도별 성적</h3>
               {contract.seasonHistory?.length ? (
                 <div className="pro-stats-table-wrap">
-                  <table className="pro-stats-table foreign-history-table">
-                    <thead><tr><th>연도</th><th>나이</th><th>성적</th><th>실제 적응</th><th>실효 OVR</th><th>부상 이탈</th></tr></thead>
-                    <tbody>{contract.seasonHistory.map((season) => <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignKboStatLine(season.stats)}</td><td>{season.actualAdaptation}</td><td>{season.effectiveOverall.toFixed(1)}</td><td>{season.injuryDays}일</td></tr>)}</tbody>
-                  </table>
+                  <ForeignKboHistoryTable contract={contract} />
                 </div>
               ) : <p className="empty">아직 KBO 시즌을 치르지 않았습니다.</p>}
             </section>
             <section className="detail-block">
               <h3>잔류 평가</h3>
+              <dl className="metric-grid compact-metrics">
+                <Metric label="계약 보직" value={foreignRoleLabel(contract.guaranteedRole)} />
+                <Metric label="현재 보직" value={foreignRoleLabel(contract.currentRole ?? contract.guaranteedRole)} />
+                <Metric label="보장 상태" value={foreignRolePromiseLabel(contract)} />
+                <Metric label="선수 불만" value={`${contract.dissatisfaction ?? 0}/100`} />
+              </dl>
+              {contract.rolePromiseNote && <p>{contract.rolePromiseNote}</p>}
               {contract.latestRetentionEvaluation ? <>
                 <p><strong>{foreignRetentionLabel(contract.latestRetentionEvaluation.recommendation)} · {contract.latestRetentionEvaluation.score}점</strong></p>
                 <p>성적 평가 {contract.latestRetentionEvaluation.performanceScore}점</p>
@@ -5056,6 +5386,15 @@ function ForeignPlayerModal({ player, contract, onClose }: { player: ForeignPlay
               <h3>해외 복귀 가능성</h3>
               <p>{contract.overseasDestination ? `${contract.overseasDestination} 진출 확정` : `${Math.round((contract.latestRetentionEvaluation?.overseasReturnProbability ?? 0) * 100)}%`}</p>
               <p>실제 적응도가 낮더라도 KBO 성적이 뛰어나면 MLB·AAA·NPB가 다시 관심을 보일 수 있습니다.</p>
+            </section>
+            <section className="detail-block wide-detail-block">
+              <h3>KBO 수상 이력</h3>
+              {awards.length === 0 ? <p className="empty">아직 주요 수상과 개인 타이틀이 없습니다.</p> : (
+                <table className="history-table">
+                  <thead><tr><th>연도</th><th>부문</th><th>기록</th></tr></thead>
+                  <tbody>{[...awards].sort((left, right) => right.seasonYear - left.seasonYear).map((row) => <tr key={row.id}><td className="num">{row.seasonYear}</td><td>{row.category}</td><td>{row.note}</td></tr>)}</tbody>
+                </table>
+              )}
             </section>
           </div>
         )}
@@ -5099,6 +5438,33 @@ function ForeignPitcherHistoryTable({ player }: { player: ForeignPlayerCandidate
         if (season.stats.kind !== "pitcher") return null;
         const stats = season.stats;
         return <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignLeagueLabel(season.league)}</td><td>{stats.games}</td><td>{stats.wins}</td><td>{stats.losses}</td><td>{stats.saves}</td><td>{stats.holds}</td><td>{stats.innings.toFixed(1)}</td><td>{stats.era.toFixed(2)}</td><td>{stats.whip.toFixed(2)}</td><td>{stats.strikeouts}</td><td>{stats.walks}</td><td>{stats.strikeoutsPerNine.toFixed(1)}</td><td>{stats.walksPerNine.toFixed(1)}</td><td>{stats.averageVelocityKph.toFixed(1)}</td><td>{stats.maxVelocityKph.toFixed(1)}</td></tr>;
+      })}</tbody>
+    </table>
+  );
+}
+
+function ForeignKboHistoryTable({ contract }: { contract: ForeignContract }) {
+  const seasons = contract.seasonHistory ?? [];
+  const pitcherSeasons = seasons.filter((season) => season.stats.kind === "pitcher");
+  if (pitcherSeasons.length > 0) {
+    return (
+      <table className="pro-stats-table foreign-history-table">
+        <thead><tr><th>연도</th><th>나이</th><th>보직</th><th>경기</th><th>선발</th><th>이닝</th><th>승</th><th>패</th><th>세이브</th><th>홀드</th><th>ERA</th><th>WHIP</th><th>탈삼진</th><th>볼넷</th><th>K/9</th><th>BB/9</th><th>WAR</th><th>적응</th><th>부상</th></tr></thead>
+        <tbody>{pitcherSeasons.map((season) => {
+          const stats = season.stats.kind === "pitcher" ? season.stats : undefined;
+          if (!stats) return null;
+          return <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignRoleLabel(contract.guaranteedRole)}</td><td>{stats.games}</td><td>{stats.gamesStarted ?? (contract.guaranteedRole === "starting-pitcher" ? stats.games : 0)}</td><td>{stats.innings.toFixed(1)}</td><td>{stats.wins}</td><td>{stats.losses}</td><td>{stats.saves}</td><td>{stats.holds}</td><td>{stats.era.toFixed(2)}</td><td>{stats.whip.toFixed(2)}</td><td>{stats.strikeouts}</td><td>{stats.walks}</td><td>{stats.strikeoutsPerNine.toFixed(1)}</td><td>{stats.walksPerNine.toFixed(1)}</td><td>{(stats.war ?? 0).toFixed(1)}</td><td>{season.actualAdaptation}</td><td>{season.injuryDays}일</td></tr>;
+        })}</tbody>
+      </table>
+    );
+  }
+  return (
+    <table className="pro-stats-table foreign-history-table">
+      <thead><tr><th>연도</th><th>나이</th><th>보직</th><th>경기</th><th>타석</th><th>타수</th><th>득점</th><th>안타</th><th>2루타</th><th>3루타</th><th>홈런</th><th>타점</th><th>볼넷</th><th>삼진</th><th>도루</th><th>타율</th><th>출루율</th><th>장타율</th><th>OPS</th><th>WAR</th><th>적응</th><th>부상</th></tr></thead>
+      <tbody>{seasons.map((season) => {
+        const stats = season.stats.kind === "hitter" ? season.stats : undefined;
+        if (!stats) return null;
+        return <tr key={season.seasonYear}><td>{season.seasonYear}</td><td>{season.age}</td><td>{foreignRoleLabel(contract.guaranteedRole)}</td><td>{stats.games}</td><td>{stats.plateAppearances}</td><td>{stats.atBats}</td><td>{stats.runs ?? 0}</td><td>{stats.hits}</td><td>{stats.doubles}</td><td>{stats.triples}</td><td>{stats.homeRuns}</td><td>{stats.runsBattedIn}</td><td>{stats.walks ?? Math.round(stats.plateAppearances * stats.walkRate)}</td><td>{stats.strikeouts ?? Math.round(stats.plateAppearances * stats.strikeoutRate)}</td><td>{stats.stolenBases}</td><td>{stats.average.toFixed(3)}</td><td>{stats.onBasePercentage.toFixed(3)}</td><td>{stats.sluggingPercentage.toFixed(3)}</td><td>{stats.ops.toFixed(3)}</td><td>{(stats.war ?? 0).toFixed(1)}</td><td>{season.actualAdaptation}</td><td>{season.injuryDays}일</td></tr>;
       })}</tbody>
     </table>
   );
@@ -6479,8 +6845,9 @@ function addSeasonSelectionHonors(
   nextAfterUserPickIds: Set<ProspectId>,
   news: CareerNewsItem[],
   seasonResults: TeamSeasonResult[],
+  foreignContracts: ForeignContract[] = [],
 ) {
-  const allStars = createAllStarRowsForSeason(seasonYear, year, players, teams, existingPlayers);
+  const allStars = createAllStarRowsForSeason(seasonYear, year, players, teams, existingPlayers, foreignContracts);
   allStars.forEach((row) => {
     if (!row.playerId) return;
     const player = players.find((candidate) => candidate.playerId === row.playerId);
@@ -8247,7 +8614,14 @@ function advanceExistingPlayers(players: ExistingLeaguePlayer[], year: number): 
   });
 }
 
-function createTeamCycleSummary(team: Team | undefined, existingPlayers: ExistingLeaguePlayer[], careerPlayers: CareerPlayerState[]): TeamCycleSummary | undefined {
+function createTeamCycleSummary(
+  team: Team | undefined,
+  existingPlayers: ExistingLeaguePlayer[],
+  careerPlayers: CareerPlayerState[],
+  foreignContracts: ForeignContract[],
+  foreignPlayers: ForeignPlayerCandidate[],
+  year: number,
+): TeamCycleSummary | undefined {
   if (!team) return undefined;
   const activeDrafted = careerPlayers.filter((player) => player.team.id === team.id && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
   const activeExisting = existingPlayers.filter((player) => player.teamId === team.id && player.status === "active");
@@ -8268,6 +8642,18 @@ function createTeamCycleSummary(team: Team | undefined, existingPlayers: Existin
     target.push({ cycle, weight });
   });
 
+  const foreignPlayerById = new Map(foreignPlayers.map((player) => [player.id, player]));
+  getRosterForeignContracts(foreignContracts, team.id, year).forEach((contract) => {
+    const player = foreignPlayerById.get(contract.playerId) ?? contract.playerSnapshot;
+    if (!player) return;
+    const latestSeason = contract.seasonHistory?.[contract.seasonHistory.length - 1];
+    const cycle = latestSeason?.formCycle ?? createForeignEstimatedSeasonCycle(player, contract, year);
+    const overall = latestSeason?.effectiveOverall ?? effectiveForeignOverall(player.hidden.baseOverall, player.hidden.kboAdaptation);
+    const weight = rosterCycleWeight(overall, true, latestSeason?.age ?? player.age) * 1.08;
+    const target = player.playerGroup === "pitcher" ? pitcherCycles : hitterCycles;
+    target.push({ cycle, weight });
+  });
+
   if (hitterCycles.length === 0 && pitcherCycles.length === 0) return undefined;
   const hitters = averageSeasonCycles(hitterCycles, "hitter", "타자 평균 사이클");
   const pitchers = averageSeasonCycles(pitcherCycles, "pitcher", "투수 평균 사이클");
@@ -8282,6 +8668,42 @@ function createTeamCycleSummary(team: Team | undefined, existingPlayers: Existin
     postseasonFitGrade: cycleGrade(postseasonFit),
     strongMonths: total.points.filter((point) => point.value >= 60).map((point) => `${point.month}월`).join(", "),
     weakMonths: total.points.filter((point) => point.value <= 45).map((point) => `${point.month}월`).join(", "),
+  };
+}
+
+function createForeignEstimatedSeasonCycle(player: ForeignPlayerCandidate, contract: ForeignContract, year: number): SeasonFormCycle {
+  const kind: SeasonFormCycle["kind"] = player.playerGroup === "pitcher" ? "pitcher" : "hitter";
+  const stamina = player.playerGroup === "pitcher"
+    ? player.pitcherTools?.stamina ?? 50
+    : (player.hitterTools?.mentality ?? 50) * 0.65 + (player.hitterTools?.speed ?? 50) * 0.35;
+  const volatility = player.hidden.volatility;
+  const pattern: SeasonFormCycle["pattern"] = volatility >= 0.72 ? "volatile"
+    : stamina <= 43 ? "stamina-fade"
+      : player.hidden.kboAdaptation <= 43 ? "rebound"
+        : stamina >= 68 ? "late-surge"
+          : "steady";
+  const shapes: Record<SeasonFormCycle["pattern"], number[]> = {
+    steady: [0, 1, 1, 0, -1, 0, 1, 0],
+    "early-peak": [7, 8, 5, 1, -2, -4, -2, -1],
+    "summer-slump": [2, 4, 3, -1, -8, -10, -4, 0],
+    "late-surge": [-4, -2, 0, 2, 3, 5, 8, 9],
+    volatile: [6, -5, 7, -6, 4, -7, 6, -2],
+    "stamina-fade": [4, 5, 3, 1, -3, -7, -10, -12],
+    rebound: [-7, -6, -3, 0, 3, 5, 7, 6],
+  };
+  const base = clampNumber(49 + (player.visible.scoutGrade === "S" ? 6 : player.visible.scoutGrade === "A" ? 3 : player.visible.scoutGrade === "B" ? 1 : 0), 40, 61);
+  const points = ([3, 4, 5, 6, 7, 8, 9, 10] as const).map((month, index) => ({
+    month,
+    value: Math.round(clampNumber(base + shapes[pattern][index] + (deterministicNoise(`${contract.id}-${year}-cycle-${month}`) - 0.5) * (4 + volatility * 8), 25, 85)),
+  }));
+  return {
+    kind,
+    pattern,
+    points,
+    reliability: roundTo(clampNumber(player.visible.confidence * 0.82, 0.35, 0.78), 2),
+    staminaSignal: Math.round(clampNumber(stamina, 20, 95)),
+    clutchSignal: Math.round(clampNumber(48 + (points[7].value - points[0].value) * 0.7, 20, 90)),
+    report: "해외 리그 기록, 체력과 KBO 적응 전망을 바탕으로 산출한 예상 사이클입니다. 실제 월별 흐름은 시즌 종료 후 기록으로 교체됩니다.",
   };
 }
 
@@ -8418,6 +8840,180 @@ function createExistingTeamSummaries(teams: Team[], players: ExistingLeaguePlaye
   });
 }
 
+type RosterDepthGroup = { position: Position; label: string; members: RosterMember[] };
+type KboRosterView = {
+  firstTeam: RosterDepthGroup[];
+  secondTeam: RosterDepthGroup[];
+  inactive: RosterMember[];
+  firstTeamCount: number;
+  secondTeamCount: number;
+  sourceCounts: { drafted: number; existing: number; foreign: number };
+};
+
+function createKboRosterView(
+  team: Team | undefined,
+  existingPlayers: ExistingLeaguePlayer[],
+  careerPlayers: CareerPlayerState[],
+  foreignContracts: ForeignContract[],
+  foreignPlayers: ForeignPlayerCandidate[],
+  year: number,
+): KboRosterView {
+  if (!team) return { firstTeam: [], secondTeam: [], inactive: [], firstTeamCount: 0, secondTeamCount: 0, sourceCounts: { drafted: 0, existing: 0, foreign: 0 } };
+  const activeDrafted = careerPlayers.filter((player) => player.team.id === team.id && player.status !== "방출" && player.status !== "은퇴" && player.status !== "해외진출");
+  const inactive = activeDrafted
+    .filter(isInactiveRosterPlayer)
+    .map((player): RosterMember => ({
+      id: `inactive-${player.playerId}`,
+      name: player.prospect.name,
+      overall: player.currentOverall,
+      age: careerAge(player),
+      primaryPosition: currentPlayerPosition(player),
+      source: "drafted",
+      playerId: player.playerId,
+      note: inactiveRosterNote(player),
+    }))
+    .sort((left, right) => inactiveRosterSort(left.note) - inactiveRosterSort(right.note) || right.overall - left.overall);
+  const draftedMembers = activeDrafted
+    .filter((player) => !isInactiveRosterPlayer(player))
+    .map((player): RosterMember => ({
+      id: `drafted-${player.playerId}`,
+      name: player.prospect.name,
+      overall: player.currentOverall,
+      age: careerAge(player),
+      primaryPosition: currentPlayerPosition(player),
+      source: "drafted",
+      playerId: player.playerId,
+      note: `${player.pick.round}R · ${player.status}`,
+    }));
+  const existingMembers = existingPlayers
+    .filter((player) => player.teamId === team.id && player.status === "active")
+    .map((player): RosterMember => ({
+      id: player.id,
+      name: existingPlayerName(player),
+      overall: player.overall,
+      age: player.age,
+      primaryPosition: existingRosterPosition(player),
+      source: "existing",
+      note: "기존 선수층",
+    }));
+  const playerById = new Map(foreignPlayers.map((player) => [player.id, player]));
+  const foreignMembers = getRosterForeignContracts(foreignContracts, team.id, year)
+    .map((contract): RosterMember => {
+      const player = playerById.get(contract.playerId) ?? contract.playerSnapshot;
+      const primaryPosition = player ? foreignRosterPosition(contract, player) : foreignContractFallbackPosition(contract);
+      const latestSeason = contract.seasonHistory?.[contract.seasonHistory.length - 1];
+      const currentRole = contract.currentRole ?? contract.guaranteedRole;
+      const protectedRole = foreignRolePromiseProtected(contract, year);
+      const roleText = currentRole === contract.guaranteedRole
+        ? foreignRoleLabel(currentRole)
+        : `${foreignRoleLabel(contract.guaranteedRole)} 계약 → ${foreignRoleLabel(currentRole)}`;
+      return {
+      id: `foreign-${contract.id}`,
+      name: player?.name ?? foreignNameFromContract(contract),
+      overall: Math.round(latestSeason?.effectiveOverall ?? (player ? effectiveForeignOverall(player.hidden.baseOverall, player.hidden.kboAdaptation) : 65)),
+      age: player ? player.age + Math.max(0, year - contract.startYear) : latestSeason?.age,
+      primaryPosition,
+      source: "foreign",
+      foreignPlayerId: player?.id,
+      bullpenRole: currentRole === "closer" ? "마무리" : undefined,
+      rosterPriority: protectedRole ? 100 : 0,
+      note: `${contract.slotType === "asian-quota" ? "아시아쿼터" : "외국인"} · ${roleText}${protectedRole ? " · 보장 유예" : contract.dissatisfaction ? ` · 불만 ${contract.dissatisfaction}` : ""}`,
+      };
+    });
+  const activeMembers = [...draftedMembers, ...existingMembers, ...foreignMembers];
+  const targets: Record<Position, number> = { SP: 5, RP: 8, C: 2, "1B": 2, "2B": 2, "3B": 2, SS: 2, LF: 2, CF: 2, RF: 2 };
+  const selectedIds = new Set<string>();
+  const selected: RosterMember[] = [];
+  activeMembers.filter((member) => (member.rosterPriority ?? 0) >= 100).sort(rosterMemberRank).forEach((member) => {
+    if (selected.length >= 29) return;
+    selectedIds.add(member.id);
+    selected.push(member);
+  });
+  POSITIONS.forEach((position) => {
+    const alreadySelected = selected.filter((member) => member.primaryPosition === position).length;
+    activeMembers
+      .filter((member) => member.primaryPosition === position && !selectedIds.has(member.id))
+      .sort(rosterMemberRank)
+      .slice(0, Math.max(0, targets[position] - alreadySelected))
+      .forEach((member) => { selectedIds.add(member.id); selected.push(member); });
+  });
+  activeMembers.filter((member) => !selectedIds.has(member.id)).sort(rosterMemberRank).slice(0, Math.max(0, 29 - selected.length)).forEach((member) => {
+    selectedIds.add(member.id);
+    selected.push(member);
+  });
+  const firstTeam = createRosterDepthGroups(selected, true);
+  const secondTeamMembers = activeMembers.filter((member) => !selectedIds.has(member.id)).sort(rosterMemberRank);
+  return {
+    firstTeam,
+    secondTeam: createRosterDepthGroups(secondTeamMembers, false),
+    inactive,
+    firstTeamCount: selected.length,
+    secondTeamCount: secondTeamMembers.length,
+    sourceCounts: {
+      drafted: selected.filter((member) => member.source === "drafted").length,
+      existing: selected.filter((member) => member.source === "existing").length,
+      foreign: selected.filter((member) => member.source === "foreign").length,
+    },
+  };
+}
+
+function createRosterDepthGroups(members: RosterMember[], firstTeam: boolean): RosterDepthGroup[] {
+  return POSITIONS.map((position) => {
+    let positionMembers = members.filter((member) => member.primaryPosition === position).sort(rosterMemberRank);
+    if (position === "RP" && firstTeam) positionMembers = assignBullpenRolesToRosterMembers(positionMembers);
+    else positionMembers = positionMembers.map((member, index) => ({
+      ...member,
+      note: `${position === "SP" && firstTeam ? `${index + 1}선발` : firstTeam ? (index === 0 ? "주전" : "백업") : "2군/육성"} · ${member.note}`,
+    }));
+    return { position, label: positionLabel(position), members: positionMembers };
+  }).filter((group) => group.members.length > 0);
+}
+
+function existingRosterPosition(player: ExistingLeaguePlayer): Position {
+  if (player.playerGroup === "pitcher") return deterministicNoise(`${player.id}-position`) < 0.62 ? "SP" : "RP";
+  const positions: Position[] = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
+  return positions[Math.floor(deterministicNoise(`${player.id}-position`) * positions.length)];
+}
+
+function rosterMemberRank(left: RosterMember, right: RosterMember): number {
+  const leftBonus = (left.source === "foreign" ? 1.5 : 0) + (left.rosterPriority ?? 0);
+  const rightBonus = (right.source === "foreign" ? 1.5 : 0) + (right.rosterPriority ?? 0);
+  return right.overall + rightBonus - (left.overall + leftBonus) || (left.age ?? 99) - (right.age ?? 99);
+}
+
+function foreignRolePromiseProtected(contract: ForeignContract, year: number): boolean {
+  const protectedRole = contract.guaranteedRole === "starting-pitcher" || contract.guaranteedRole === "closer" || contract.guaranteedRole === "everyday-player";
+  if (!protectedRole) return false;
+  if (contract.rolePromiseStatus) return contract.rolePromiseStatus === "protected" && (contract.rolePromiseGraceUntilYear ?? contract.startYear) >= year;
+  return (contract.seasonHistory?.length ?? 0) === 0 && contract.startYear >= year;
+}
+
+function inactiveRosterSort(note: string): number {
+  if (note.includes("부상")) return 0;
+  if (note.includes("상무")) return 1;
+  return 2;
+}
+
+function getRosterForeignContracts(contracts: ForeignContract[], teamId: TeamId, year: number): ForeignContract[] {
+  const active = contracts.filter((contract) => contract.teamId === teamId && contract.status === "active");
+  if (active.length > 0) return active;
+  return getActiveForeignContracts(contracts, teamId, year);
+}
+
+function foreignContractFallbackPosition(contract: ForeignContract): Position {
+  const role = contract.currentRole ?? contract.guaranteedRole;
+  if (contract.playerGroup === "pitcher") {
+    return role === "starting-pitcher" || role === "flexible-pitcher" ? "SP" : "RP";
+  }
+  return "RF";
+}
+
+function foreignNameFromContract(contract: ForeignContract): string {
+  const slug = String(contract.playerId).replace(/^foreign-\d+-(?:standard|asian-quota)-\d+-/, "");
+  if (!slug || slug === String(contract.playerId)) return "외국인 선수";
+  return slug.split("-").filter(Boolean).map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
+}
+
 function createCurrentRosterRows(
   team: Team | undefined,
   existingPlayers: ExistingLeaguePlayer[],
@@ -8531,7 +9127,7 @@ function createRosterMembersForPosition(
       note: "기존 선수층",
     }));
   const foreignPlayerById = new Map(foreignPlayers.map((player) => [player.id, player]));
-  const foreignMembers: RosterMember[] = getActiveForeignContracts(foreignContracts, team.id, year)
+  const foreignMembers: RosterMember[] = getRosterForeignContracts(foreignContracts, team.id, year)
     .map((contract) => ({ contract, player: foreignPlayerById.get(contract.playerId) ?? contract.playerSnapshot }))
     .filter((entry): entry is { contract: ForeignContract; player: ForeignPlayerCandidate } => Boolean(entry.player))
     .filter(({ contract, player }) => foreignRosterPosition(contract, player) === position)
@@ -8543,14 +9139,15 @@ function createRosterMembersForPosition(
       primaryPosition: foreignRosterPosition(contract, player),
       source: "foreign",
       foreignPlayerId: player.id,
-      note: `${foreignSlotLabel(contract.slotType)} · ${foreignRoleLabel(contract.guaranteedRole)}`,
+      note: `${foreignSlotLabel(contract.slotType)} · ${foreignRoleLabel(contract.currentRole ?? contract.guaranteedRole)}`,
     }));
   return { draftedMembers, existingMembers, foreignMembers, inactiveMembers };
 }
 
 function foreignRosterPosition(contract: ForeignContract, player: ForeignPlayerCandidate): Position {
-  if (contract.guaranteedRole === "closer" || contract.guaranteedRole === "bullpen") return "RP";
-  if (contract.guaranteedRole === "starting-pitcher") return "SP";
+  const role = contract.currentRole ?? contract.guaranteedRole;
+  if (role === "closer" || role === "bullpen") return "RP";
+  if (role === "starting-pitcher") return "SP";
   return player.primaryPosition;
 }
 
@@ -8854,25 +9451,27 @@ function existingPlayersAtPosition(players: ExistingLeaguePlayer[], position: Po
   return players.filter((player) => player.playerGroup === "hitter" && Math.floor(deterministicNoise(`${player.id}-position`) * hitterPositions.length) === index);
 }
 
-function createAllStarHistoryRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): SelectionHistoryRow[] {
+function createAllStarHistoryRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[], foreignContracts: ForeignContract[] = []): SelectionHistoryRow[] {
   const seasons = Array.from(new Set(results.map((result) => result.seasonYear))).sort((left, right) => right - left);
   return seasons.flatMap((seasonYear) => {
     const yearIndex = results.find((result) => result.seasonYear === seasonYear)?.yearIndex ?? 0;
-    return createAllStarRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers);
+    return createAllStarRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers, foreignContracts);
   });
 }
 
-function createAllStarRowsForSeason(seasonYear: number, yearIndex: number, players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): SelectionHistoryRow[] {
+function createAllStarRowsForSeason(seasonYear: number, yearIndex: number, players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[], foreignContracts: ForeignContract[] = []): SelectionHistoryRow[] {
   const slots = ["선발투수", "계투", "마무리", "포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수", "지명타자"];
   return (["드림", "나눔"] as const).flatMap((division) => {
     const rows: SelectionHistoryRow[] = [];
     const usedDrafted = new Set<ProspectId>();
     const usedExisting = new Set<string>();
+    const usedForeign = new Set<ForeignPlayerId>();
     slots.forEach((slot, index) => {
-      const row = selectAllStarSlot(seasonYear, yearIndex, division, slot, index, players, teams, existingPlayers, usedDrafted, usedExisting);
+      const row = selectAllStarSlot(seasonYear, yearIndex, division, slot, index, players, teams, existingPlayers, foreignContracts, usedDrafted, usedExisting, usedForeign);
       if (!row) return;
       rows.push(row);
       if (row.playerId) usedDrafted.add(row.playerId);
+      else if (row.foreignPlayerId) usedForeign.add(row.foreignPlayerId);
       else usedExisting.add(row.id.replace(`allstar-${seasonYear}-${division}-${slot}-existing-`, ""));
     });
     return rows;
@@ -8888,8 +9487,10 @@ function selectAllStarSlot(
   players: CareerPlayerState[],
   teams: Team[],
   existingPlayers: ExistingLeaguePlayer[],
+  foreignContracts: ForeignContract[],
   usedDrafted: Set<ProspectId>,
   usedExisting: Set<string>,
+  usedForeign: Set<ForeignPlayerId>,
 ): SelectionHistoryRow | undefined {
   const draftedCandidates = players
     .filter((player) => isDraftedAllStarEligible(player, division, slot))
@@ -8901,10 +9502,22 @@ function selectAllStarSlot(
     .filter((player) => !usedExisting.has(player.id))
     .map((player) => ({ player, score: allStarExistingScore(player, slot, seasonYear) }))
     .sort((left, right) => right.score - left.score);
+  const foreignCandidates = foreignAwardContractsForSeason(foreignContracts, seasonYear)
+    .filter((contract) => allStarDivisionForTeam(contract.teamId) === division)
+    .filter((contract) => !usedForeign.has(contract.playerId))
+    .flatMap((contract) => {
+      const season = contract.seasonHistory?.find((row) => row.seasonYear === seasonYear);
+      const player = contract.playerSnapshot;
+      if (!season || !player || !foreignMatchesAllStarSlot(contract, player, season.stats, slot)) return [];
+      return [{ contract, player, season, score: foreignAllStarScore(season.stats, slot) }];
+    })
+    .sort((left, right) => right.score - left.score);
   const drafted = draftedCandidates[0];
   const existing = existingCandidates[0];
-  if (!drafted && !existing) return undefined;
-  const draftedWins = drafted && (!existing || drafted.score >= existing.score + allStarTakeoverMargin(drafted.player.yearsSinceDraft));
+  const foreign = foreignCandidates[0];
+  if (!drafted && !existing && !foreign) return undefined;
+  const incumbentScore = Math.max(existing?.score ?? -Infinity, foreign?.score ?? -Infinity);
+  const draftedWins = drafted && drafted.score >= incumbentScore + allStarTakeoverMargin(drafted.player.yearsSinceDraft);
   if (draftedWins) {
     const team = teams.find((candidate) => candidate.id === drafted.player.team.id);
     return {
@@ -8918,6 +9531,19 @@ function selectAllStarSlot(
       note: `${seasonYear}년 올스타 ${division} ${slot} 선발`,
     };
   }
+  if (foreign && (!existing || foreign.score >= existing.score)) {
+    const team = teams.find((candidate) => candidate.id === foreign.contract.teamId);
+    return {
+      id: `allstar-${seasonYear}-${division}-${slot}-foreign-${foreign.player.id}`,
+      seasonYear,
+      group: division,
+      category: slot,
+      teamName: team?.name ?? "-",
+      playerName: foreign.player.name,
+      foreignPlayerId: foreign.player.id,
+      note: `${seasonYear}년 올스타 ${division} ${slot} 선발 · 외국인 선수`,
+    };
+  }
   if (!existing) return undefined;
   const team = teams.find((candidate) => candidate.id === existing.player.teamId);
   return {
@@ -8929,6 +9555,26 @@ function selectAllStarSlot(
     playerName: existingPlayerName(existing.player),
     note: `${seasonYear}년 올스타 ${division} ${slot} 선발 · 기존 선수`,
   };
+}
+
+function foreignMatchesAllStarSlot(contract: ForeignContract, player: ForeignPlayerCandidate, stats: ForeignRecentStats, slot: string): boolean {
+  if (stats.kind === "pitcher") {
+    const starts = stats.gamesStarted ?? 0;
+    if (slot === "선발투수") return starts >= Math.max(8, stats.games * 0.45);
+    if (slot === "마무리") return stats.saves >= 8 || contract.currentRole === "closer" || contract.guaranteedRole === "closer";
+    return slot === "계투" && starts < Math.max(8, stats.games * 0.45) && stats.saves < 8;
+  }
+  if (slot === "지명타자") return ["1B", "LF", "RF"].includes(player.primaryPosition) && (player.hitterTools?.defense ?? 50) < 58;
+  return matchesAllStarSlot(player.primaryPosition, slot);
+}
+
+function foreignAllStarScore(stats: ForeignRecentStats, slot: string): number {
+  if (stats.kind === "pitcher") {
+    const war = stats.war ?? 0;
+    const roleProduction = slot === "마무리" ? stats.saves * 0.28 : slot === "계투" ? stats.holds * 0.2 : stats.wins * 0.55;
+    return 68 + war * 7.2 - stats.era * 1.15 + roleProduction;
+  }
+  return 68 + (stats.war ?? 0) * 7 + stats.ops * 8 + stats.homeRuns * 0.09 + (stats.fieldingValue ?? 0) * (slot === "지명타자" ? 0 : 0.3);
 }
 
 function isDraftedAllStarEligible(player: CareerPlayerState, division: "드림" | "나눔", slot: string): boolean {
@@ -9225,12 +9871,12 @@ function nationalTeamResultFromNote(note: string): string {
   return "대표팀";
 }
 
-function createYearlyAwardRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[]): YearlyAwardRow[] {
+function createYearlyAwardRows(results: TeamSeasonResult[], players: CareerPlayerState[], teams: Team[], existingPlayers: ExistingLeaguePlayer[], foreignContracts: ForeignContract[] = []): YearlyAwardRow[] {
   const seasons = Array.from(new Set(results.map((result) => result.seasonYear))).sort((left, right) => right - left);
   return seasons.flatMap((seasonYear) => {
     const seasonResults = results.filter((result) => result.seasonYear === seasonYear);
     const yearIndex = seasonResults[0]?.yearIndex ?? 0;
-    return createAwardRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers, seasonResults);
+    return createAwardRowsForSeason(seasonYear, yearIndex, players, teams, existingPlayers, seasonResults, foreignContracts);
   });
 }
 
@@ -9239,6 +9885,9 @@ type SeasonAwardCandidate = {
   teamId: TeamId;
   playerName: string;
   playerId?: ProspectId;
+  foreignPlayerId?: ForeignPlayerId;
+  isForeign?: boolean;
+  war?: number;
   score: number;
   note: string;
 };
@@ -9265,13 +9914,14 @@ function createAwardRowsForSeason(
   teams: Team[],
   existingPlayers: ExistingLeaguePlayer[],
   seasonResults: TeamSeasonResult[],
+  foreignContracts: ForeignContract[] = [],
 ): YearlyAwardRow[] {
   const rows: YearlyAwardRow[] = [];
   const usedGoldGloveKeys = new Set<string>();
   const usedReliefTitleKeys = new Set<string>();
 
   GOLD_GLOVE_CATEGORIES.forEach((category, index) => {
-    const candidates = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults)
+    const candidates = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults, foreignContracts)
       .filter((candidate) => !usedGoldGloveKeys.has(candidate.key))
       .sort((left, right) => right.score - left.score);
     const winner = candidates[0];
@@ -9281,7 +9931,7 @@ function createAwardRowsForSeason(
   });
 
   TITLE_CATEGORIES.forEach((category, index) => {
-    const winner = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults)
+    const winner = createSeasonAwardCandidates(category, seasonYear, yearIndex, players, existingPlayers, seasonResults, foreignContracts)
       .filter((candidate) => !(["홀드왕", "세이브왕"].includes(category) && usedReliefTitleKeys.has(candidate.key)))
       .sort((left, right) => right.score - left.score)[0];
     if (!winner) return;
@@ -9292,13 +9942,13 @@ function createAwardRowsForSeason(
   const rookie = chooseRookieAwardRow(players, teams, seasonYear, yearIndex);
   if (rookie) rows.push(rookie);
 
-  const mvpCandidates = createSeasonAwardCandidates("MVP", seasonYear, yearIndex, players, existingPlayers, seasonResults)
+  const mvpCandidates = createSeasonAwardCandidates("MVP", seasonYear, yearIndex, players, existingPlayers, seasonResults, foreignContracts)
     .map((candidate) => {
       const goldGloveBonus = rows.some((row) => row.playerName === candidate.playerName && row.teamName === (teams.find((team) => team.id === candidate.teamId)?.name ?? "-") && row.category.startsWith("골든글러브")) ? 8 : 0;
       const titleBonus = rows.filter((row) => row.playerName === candidate.playerName && TITLE_CATEGORIES.includes(row.category as typeof TITLE_CATEGORIES[number])).length * 3;
       return { ...candidate, score: candidate.score + goldGloveBonus + titleBonus };
     })
-    .sort((left, right) => right.score - left.score);
+    .sort(compareMvpCandidates);
   if (mvpCandidates[0]) rows.push(seasonAwardRow(mvpCandidates[0], "MVP", seasonYear, 99, teams));
   return rows;
 }
@@ -9311,6 +9961,7 @@ function seasonAwardRow(candidate: SeasonAwardCandidate, category: string, seaso
     teamName: teams.find((team) => team.id === candidate.teamId)?.name ?? "-",
     playerName: candidate.playerName,
     playerId: candidate.playerId,
+    foreignPlayerId: candidate.foreignPlayerId,
     note: candidate.note,
   };
 }
@@ -9322,6 +9973,7 @@ function createSeasonAwardCandidates(
   players: CareerPlayerState[],
   existingPlayers: ExistingLeaguePlayer[],
   seasonResults: TeamSeasonResult[],
+  foreignContracts: ForeignContract[] = [],
 ): SeasonAwardCandidate[] {
   const drafted = players.flatMap((player) => {
     const stats = player.proSeasonStats?.find((row) => row.seasonYear === seasonYear && row.level === "1군");
@@ -9334,7 +9986,11 @@ function createSeasonAwardCandidates(
     const candidate = existingSeasonAwardCandidate(player, category, seasonYear, yearIndex, seasonResults);
     return candidate ? [candidate] : [];
   });
-  return [...drafted, ...existing];
+  const foreign = foreignAwardContractsForSeason(foreignContracts, seasonYear).flatMap((contract) => {
+    const candidate = foreignSeasonAwardCandidate(contract, category, seasonYear, seasonResults);
+    return candidate ? [candidate] : [];
+  });
+  return [...drafted, ...existing, ...foreign];
 }
 
 function draftedAwardCandidate(player: CareerPlayerState, stats: ProSeasonStats, category: string, results: TeamSeasonResult[]): SeasonAwardCandidate | undefined {
@@ -9345,9 +10001,104 @@ function draftedAwardCandidate(player: CareerPlayerState, stats: ProSeasonStats,
     teamId: stats.teamId,
     playerName: player.prospect.name,
     playerId: player.playerId,
+    war: stats.war,
     score,
     note: `${awardStatLine(stats, category)} · 드래프트 출신`,
   };
+}
+
+function foreignAwardContractsForSeason(contracts: ForeignContract[], seasonYear: number): ForeignContract[] {
+  const byPlayer = new Map<ForeignPlayerId, ForeignContract>();
+  contracts.forEach((contract) => {
+    if (!contract.playerSnapshot || !contract.seasonHistory?.some((season) => season.seasonYear === seasonYear)) return;
+    const current = byPlayer.get(contract.playerId);
+    if (!current || contract.startYear > current.startYear) byPlayer.set(contract.playerId, contract);
+  });
+  return Array.from(byPlayer.values());
+}
+
+function foreignSeasonAwardCandidate(contract: ForeignContract, category: string, seasonYear: number, results: TeamSeasonResult[]): SeasonAwardCandidate | undefined {
+  const season = contract.seasonHistory?.find((row) => row.seasonYear === seasonYear);
+  const player = contract.playerSnapshot;
+  if (!season || !player) return undefined;
+  const score = foreignAwardScore(season.stats, player, contract, category, results);
+  if (score === undefined) return undefined;
+  return {
+    key: `foreign-${player.id}`,
+    teamId: contract.teamId,
+    playerName: player.name,
+    foreignPlayerId: player.id,
+    isForeign: true,
+    war: season.stats.war,
+    score,
+    note: `${foreignAwardStatLine(season.stats, category)} · 외국인 선수`,
+  };
+}
+
+function foreignAwardScore(stats: ForeignRecentStats, player: ForeignPlayerCandidate, contract: ForeignContract, category: string, results: TeamSeasonResult[]): number | undefined {
+  if (category === "타율왕") return stats.kind === "hitter" && stats.plateAppearances >= 400 ? stats.average : undefined;
+  if (category === "홈런왕") return stats.kind === "hitter" && stats.plateAppearances >= 180 ? stats.homeRuns : undefined;
+  if (category === "타점왕") return stats.kind === "hitter" && stats.plateAppearances >= 180 ? stats.runsBattedIn : undefined;
+  if (category === "도루왕") return stats.kind === "hitter" && stats.plateAppearances >= 150 ? stats.stolenBases : undefined;
+  if (stats.kind === "pitcher") {
+    const starts = stats.gamesStarted ?? 0;
+    if (category === "다승왕") return starts >= 10 && stats.innings >= 55 ? stats.wins : undefined;
+    if (category === "평균자책점왕") return starts >= 18 && stats.innings >= 120 ? -stats.era : undefined;
+    if (category === "탈삼진왕") return starts >= 8 && stats.innings >= 55 ? stats.strikeouts : undefined;
+    if (category === "홀드왕") return stats.games - starts >= 25 ? stats.holds : undefined;
+    if (category === "세이브왕") return stats.games - starts >= 20 ? stats.saves : undefined;
+  }
+  if (category.startsWith("골든글러브")) {
+    if (!foreignMatchesGoldenGloveCategory(stats, player, contract, category)) return undefined;
+    if (stats.kind === "pitcher") return stats.innings >= 80 ? (stats.war ?? 0) * 12 - stats.era * 1.4 + stats.wins * 0.45 : undefined;
+    if (stats.games < 65 || stats.plateAppearances < 220) return undefined;
+    const offense = stats.ops * 22 + stats.homeRuns * 0.16 + stats.runsBattedIn * 0.035;
+    const defense = category === "골든글러브 지명타자" ? 0 : (stats.fieldingValue ?? 0) * 1.35;
+    return (stats.war ?? 0) * 10 + offense + defense;
+  }
+  if (category === "MVP") {
+    const result = results.find((candidate) => candidate.teamId === contract.teamId);
+    const teamBonus = result ? Math.max(0, 6 - result.rank) * 0.7 : 0;
+    const nationalityVotingEdge = 0.65;
+    if (stats.kind === "pitcher") return stats.innings >= 65 ? (stats.war ?? 0) * 12 + stats.wins * 0.6 + stats.strikeouts * 0.025 + teamBonus - nationalityVotingEdge : undefined;
+    return stats.plateAppearances >= 260 ? (stats.war ?? 0) * 12 + stats.ops * 12 + stats.homeRuns * 0.12 + stats.stolenBases * 0.04 + teamBonus - nationalityVotingEdge : undefined;
+  }
+  return undefined;
+}
+
+function foreignMatchesGoldenGloveCategory(stats: ForeignRecentStats, player: ForeignPlayerCandidate, contract: ForeignContract, category: string): boolean {
+  if (category === "골든글러브 투수") return stats.kind === "pitcher" && (stats.gamesStarted ?? 0) >= 10;
+  if (stats.kind !== "hitter") return false;
+  if (category === "골든글러브 포수") return player.primaryPosition === "C";
+  if (category === "골든글러브 1루수") return player.primaryPosition === "1B";
+  if (category === "골든글러브 2루수") return player.primaryPosition === "2B";
+  if (category === "골든글러브 3루수") return player.primaryPosition === "3B";
+  if (category === "골든글러브 유격수") return player.primaryPosition === "SS";
+  if (category.startsWith("골든글러브 외야수")) return ["LF", "CF", "RF"].includes(player.primaryPosition);
+  return category === "골든글러브 지명타자" && (["1B", "LF", "RF"].includes(player.primaryPosition) || contract.currentRole === "everyday-player");
+}
+
+function foreignAwardStatLine(stats: ForeignRecentStats, category: string): string {
+  if (stats.kind === "hitter") {
+    if (category === "타율왕") return `타율 ${formatDecimal(stats.average, 3)}`;
+    if (category === "홈런왕") return `${stats.homeRuns}홈런`;
+    if (category === "타점왕") return `${stats.runsBattedIn}타점`;
+    if (category === "도루왕") return `${stats.stolenBases}도루`;
+    return `OPS ${formatDecimal(stats.ops, 3)} · ${stats.homeRuns}홈런 · WAR ${formatDecimal(stats.war ?? 0, 1)}`;
+  }
+  if (category === "다승왕") return `${stats.wins}승`;
+  if (category === "평균자책점왕") return `ERA ${formatDecimal(stats.era, 2)}`;
+  if (category === "탈삼진왕") return `${stats.strikeouts}탈삼진`;
+  if (category === "홀드왕") return `${stats.holds}홀드`;
+  if (category === "세이브왕") return `${stats.saves}세이브`;
+  return `${stats.wins}승 · ERA ${formatDecimal(stats.era, 2)} · WAR ${formatDecimal(stats.war ?? 0, 1)}`;
+}
+
+function compareMvpCandidates(left: SeasonAwardCandidate, right: SeasonAwardCandidate): number {
+  const warGap = Math.abs((left.war ?? -99) - (right.war ?? -99));
+  const scoreGap = Math.abs(left.score - right.score);
+  if (warGap <= 0.2 && scoreGap <= 1.4 && Boolean(left.isForeign) !== Boolean(right.isForeign)) return left.isForeign ? 1 : -1;
+  return right.score - left.score;
 }
 
 function awardScoreFromStats(stats: ProSeasonStats, category: string, player: CareerPlayerState, results: TeamSeasonResult[]): number | undefined {
@@ -9422,6 +10173,7 @@ function existingSeasonAwardCandidate(
     key: `existing-${player.id}`,
     teamId: player.teamId,
     playerName: existingPlayerName(player),
+    war: metric.war,
     score: metric.score,
     note: `${metric.note} · 기존 선수층`,
   };
@@ -9438,7 +10190,7 @@ function existingMatchesGoldenGloveCategory(position: Position, category: string
   return category === "골든글러브 지명타자" && ["1B", "LF", "RF"].includes(position);
 }
 
-function existingAwardMetric(category: string, overall: number, position: Position, noise: number, teamRank: number, profileKey: string): { score: number; note: string } | undefined {
+function existingAwardMetric(category: string, overall: number, position: Position, noise: number, teamRank: number, profileKey: string): { score: number; note: string; war?: number } | undefined {
   const prime = overall - 60;
   const contactAffinity = deterministicNoise(`${profileKey}-contact-profile`);
   const powerAffinity = deterministicNoise(`${profileKey}-power-profile`);
@@ -9481,8 +10233,8 @@ function existingAwardMetric(category: string, overall: number, position: Positi
     return { score: value, note: `${value}세이브` };
   }
   const estimatedWar = clampNumber(-0.3 + prime * 0.18 + noise * 1.4, -0.5, 8.5);
-  if (category.startsWith("골든글러브")) return { score: estimatedWar * 10 + overall * 0.22, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}` };
-  if (category === "MVP") return { score: estimatedWar * 12 + Math.max(0, 5 - teamRank) * 0.7, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}` };
+  if (category.startsWith("골든글러브")) return { score: estimatedWar * 10 + overall * 0.22, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}`, war: estimatedWar };
+  if (category === "MVP") return { score: estimatedWar * 12 + Math.max(0, 5 - teamRank) * 0.7, note: `추정 WAR ${formatDecimal(estimatedWar, 1)}`, war: estimatedWar };
   return undefined;
 }
 
@@ -10624,8 +11376,79 @@ function applyRosterLimitCuts(
       cut.trackingArchivedAtYear = year;
       roster = teamPlayers();
     }
+
+    roster = teamPlayers();
+    const developmentCutLimit = roster.length >= 65 ? 2 : 1;
+    let developmentCuts = 0;
+    while (developmentCuts < developmentCutLimit) {
+      const positionCounts = countRosterPositions(roster);
+      const candidate = roster
+        .filter((player) => isDevelopmentReleaseCandidate(player, positionCounts))
+        .map((player) => ({ player, urgency: developmentReleaseUrgency(player) }))
+        .filter(({ urgency }) => urgency > 0)
+        .sort((left, right) => right.urgency - left.urgency || rosterCutScore(left.player, positionCounts) - rosterCutScore(right.player, positionCounts))[0];
+      if (!candidate || Math.random() >= developmentReleaseChance(candidate.player, candidate.urgency)) break;
+
+      const cut = candidate.player;
+      cut.status = "방출";
+      cut.failureReason = developmentReleaseReason(cut);
+      cut.transactionLog = [...cut.transactionLog, `${year}년차 육성 경쟁력 평가 후 방출`];
+      cut.trackingStatus = "archived";
+      cut.trackingArchivedAtYear = year;
+      addCareerNews(
+        news,
+        cut,
+        year,
+        cut.team.id === userTeamId || cut.originalTeamId === userTeamId ? 3 : 2,
+        "방출",
+        `${cut.prospect.name}, 육성선수 경쟁에서 제외`,
+        `${team.shortName}는 보호기간이 끝난 뒤에도 ${cut.failureReason} 문제가 이어진 선수를 정리했다. 젊은 선수지만 현재 기량과 남은 성장 폭을 함께 검토한 결정이다.`,
+        careerContext(cut, userTeamId, watchedIds, nextAfterUserPickIds),
+      );
+      developmentCuts += 1;
+      roster = teamPlayers();
+    }
   });
   return players;
+}
+
+function isDevelopmentReleaseCandidate(player: CareerPlayerState, positionCounts: Record<Position, number>): boolean {
+  if (player.yearsSinceDraft <= player.releaseProtectionUntilYear) return false;
+  if (player.status !== "2군" || player.militaryStatus === "serving") return false;
+  if (player.debuted || player.currentOverall >= 49) return false;
+  const position = currentPlayerPosition(player);
+  if ((positionCounts[position] ?? 0) <= MIN_POSITION_DEPTH_FOR_CUTS[position]) return false;
+  if (player.pick.round <= 3 && player.yearsSinceDraft <= 3 && player.currentOverall >= 35) return false;
+  const potential = player.prospect.trueTalent.potential;
+  const growth = player.currentOverall - player.initialOverall;
+  if (player.yearsSinceDraft === 2) return player.currentOverall < 40 && potential < 54 && growth <= 2;
+  if (player.yearsSinceDraft === 3) return player.currentOverall < 43 && potential < 57 && growth <= 3;
+  return player.currentOverall < 47 && potential < 59 && growth <= 4;
+}
+
+function developmentReleaseUrgency(player: CareerPlayerState): number {
+  const potential = player.prospect.trueTalent.potential;
+  const growth = player.currentOverall - player.initialOverall;
+  const overallDeficit = Math.max(0, 47 - player.currentOverall) * 1.6;
+  const potentialDeficit = Math.max(0, 58 - potential) * 0.8;
+  const stagnation = Math.max(0, player.yearsSinceDraft * 1.5 - growth) * 0.9;
+  const lateRoundPressure = player.pick.round >= 8 ? 3 : player.pick.round >= 5 ? 1.5 : 0;
+  return overallDeficit + potentialDeficit + stagnation + lateRoundPressure;
+}
+
+function developmentReleaseChance(player: CareerPlayerState, urgency: number): number {
+  const experienceBase = player.yearsSinceDraft === 2 ? 0.08 : player.yearsSinceDraft === 3 ? 0.14 : 0.2;
+  const severeWeakness = player.currentOverall < 36 ? 0.16 : player.currentOverall < 40 ? 0.08 : 0;
+  return clampNumber(experienceBase + urgency * 0.008 + severeWeakness, 0.08, 0.58);
+}
+
+function developmentReleaseReason(player: CareerPlayerState): string {
+  const growth = player.currentOverall - player.initialOverall;
+  if (growth <= 0) return "성장 정체";
+  if (player.prospect.trueTalent.proAdaptation < 0.4) return "프로 적응 실패";
+  if (player.prospect.playerGroup === "pitcher" && player.currentOverall < 42) return "구위 경쟁력 부족";
+  if (player.prospect.playerGroup !== "pitcher" && player.currentOverall < 42) return "공격 생산력 부족";
+  return "육성 경쟁력 부족";
 }
 
 function isRosterCountedPlayer(player: CareerPlayerState): boolean {
@@ -10682,6 +11505,7 @@ function simulateProSeasonStats(
   existingPlayers: ExistingLeaguePlayer[],
   seasonYear: number,
   careerYear: number,
+  foreignContracts: ForeignContract[] = [],
 ): CareerPlayerState[] {
   const nextPlayers = players.map((player) => {
     const previousStats = (player.proSeasonStats ?? []).filter((stats) => stats.seasonYear !== seasonYear);
@@ -10693,19 +11517,40 @@ function simulateProSeasonStats(
   });
 
   results.forEach((result) => {
-    const teamPitchers: Array<{ player: CareerPlayerState; stats: ProPitcherSeasonStats }> = nextPlayers.flatMap((player) => {
+    const draftedPitchers: TeamPitcherDecisionEntry[] = nextPlayers.flatMap((player) => {
       const stats = latestPitcherStats(player, seasonYear);
-      return player.team.id === result.teamId && stats?.level === "1군" ? [{ player, stats }] : [];
+      return player.team.id === result.teamId && stats?.level === "1군" ? [{
+        id: String(player.playerId),
+        stats,
+        gamesStarted: stats.gamesStarted,
+        role: player.bullpenRole,
+      }] : [];
     });
+    const foreignPitchers: TeamPitcherDecisionEntry[] = foreignContracts.flatMap((contract) => {
+      if (contract.teamId !== result.teamId || contract.startYear > seasonYear || contract.endYear < seasonYear) return [];
+      const season = contract.seasonHistory?.find((row) => row.seasonYear === seasonYear);
+      if (!season || season.stats.kind !== "pitcher") return [];
+      const currentRole = contract.currentRole ?? contract.guaranteedRole;
+      const starter = currentRole === "starting-pitcher"
+        || (currentRole === "flexible-pitcher" && contract.playerSnapshot?.primaryPosition === "SP");
+      return [{
+        id: String(contract.playerId),
+        stats: season.stats,
+        gamesStarted: starter ? season.stats.games : 0,
+        role: currentRole,
+      }];
+    });
+    const teamPitchers = [...draftedPitchers, ...foreignPitchers];
     if (teamPitchers.length === 0) return;
 
     const existingPitchers = existingPlayers.filter((player) => player.teamId === result.teamId && player.status === "active" && player.playerGroup === "pitcher");
-    const draftedWorkload = teamPitchers.reduce((sum, entry) => sum + entry.stats.innings, 0);
+    const visibleWorkload = teamPitchers.reduce((sum, entry) => sum + entry.stats.innings, 0);
     const existingWorkload = existingPitchers.reduce((sum, player) => sum + Math.max(35, (player.overall - 38) * 3.2), 0);
-    const draftedShare = existingPitchers.length === 0 ? 1 : draftedWorkload / Math.max(1, draftedWorkload + existingWorkload);
-    const visibleWins = Math.min(result.wins, Math.round(result.wins * draftedShare));
-    const visibleLosses = Math.min(result.losses, Math.round(result.losses * draftedShare));
+    const visibleShare = existingPitchers.length === 0 ? 1 : visibleWorkload / Math.max(1, visibleWorkload + existingWorkload);
+    const visibleWins = Math.min(result.wins, Math.round(result.wins * visibleShare));
+    const visibleLosses = Math.min(result.losses, Math.round(result.losses * visibleShare));
 
+    teamPitchers.forEach(({ stats }) => { stats.wins = 0; stats.losses = 0; });
     distributePitcherDecisions(teamPitchers, visibleWins, "wins");
     distributePitcherDecisions(teamPitchers, visibleLosses, "losses");
     capTeamPitcherStat(teamPitchers.map((entry) => entry.stats), "saves", result.wins);
@@ -10925,16 +11770,25 @@ function latestPitcherStats(player: CareerPlayerState, seasonYear: number): ProP
   return stats?.kind === "pitcher" ? stats : undefined;
 }
 
+type TeamPitcherDecisionStats = Pick<ProPitcherSeasonStats, "games" | "innings" | "wins" | "losses" | "saves" | "holds" | "era">;
+type TeamPitcherDecisionEntry = {
+  id: string;
+  stats: TeamPitcherDecisionStats;
+  gamesStarted: number;
+  role?: string;
+};
+
 function distributePitcherDecisions(
-  entries: Array<{ player: CareerPlayerState; stats: ProPitcherSeasonStats }>,
+  entries: TeamPitcherDecisionEntry[],
   target: number,
   key: "wins" | "losses",
 ): void {
   let remaining = target;
   while (remaining > 0) {
     const candidate = entries
-      .filter(({ stats }) => {
-        const decisionCapacity = stats.gamesStarted + Math.floor((stats.games - stats.gamesStarted) * 0.32);
+      .filter((entry) => {
+        const { stats } = entry;
+        const decisionCapacity = entry.gamesStarted + Math.floor((stats.games - entry.gamesStarted) * 0.32);
         return stats.wins + stats.losses < decisionCapacity;
       })
       .sort((left, right) => pitcherDecisionWeight(right, key) - pitcherDecisionWeight(left, key))[0];
@@ -10944,15 +11798,17 @@ function distributePitcherDecisions(
   }
 }
 
-function pitcherDecisionWeight(entry: { player: CareerPlayerState; stats: ProPitcherSeasonStats }, key: "wins" | "losses"): number {
-  const { player, stats } = entry;
-  const workload = stats.gamesStarted * 4 + (stats.games - stats.gamesStarted) * 0.42 + stats.innings * 0.08;
+function pitcherDecisionWeight(entry: TeamPitcherDecisionEntry, key: "wins" | "losses"): number {
+  const { stats } = entry;
+  const workload = entry.gamesStarted * 4 + (stats.games - entry.gamesStarted) * 0.42 + stats.innings * 0.08;
   const performance = key === "wins" ? Math.max(0.4, 6.3 - stats.era) : Math.max(0.4, stats.era - 1.7);
-  const roleFactor = player.bullpenRole === "마무리" ? 0.7 : player.bullpenRole === "패전조" ? (key === "losses" ? 1.25 : 0.55) : 1;
+  const closingRole = entry.role === "마무리" || entry.role === "closer";
+  const losingRole = entry.role === "패전조";
+  const roleFactor = closingRole ? 0.7 : losingRole ? (key === "losses" ? 1.25 : 0.55) : 1;
   return workload * performance * roleFactor / (stats[key] + 1);
 }
 
-function capTeamPitcherStat(stats: ProPitcherSeasonStats[], key: "saves" | "holds", maximum: number): void {
+function capTeamPitcherStat(stats: TeamPitcherDecisionStats[], key: "saves" | "holds", maximum: number): void {
   let total = stats.reduce((sum, row) => sum + row[key], 0);
   while (total > maximum) {
     const row = [...stats].filter((candidate) => candidate[key] > 0).sort((left, right) => right[key] - left[key])[0];
@@ -10975,6 +11831,7 @@ function simulateTeamSeason(
   yearIndex: number,
   previousResults: TeamSeasonResult[],
   teamTradeStrengthAdjustments: Record<string, number>,
+  foreignContracts: ForeignContract[] = [],
 ): TeamSeasonResult[] {
   const ranked = teams
     .map((team) => {
@@ -11019,10 +11876,11 @@ function simulateTeamSeason(
         .sort((left, right) => right.overall - left.overall)
         .slice(0, 14)
         .reduce((total, player, index) => total + Math.max(0, player.overall - 58) * (index < 5 ? 0.085 : 0.052), 0);
+      const foreignContribution = foreignTeamStrengthContribution(foreignContracts, team.id, seasonYear);
       const injuryPenalty = roster.filter((player) => player.status === "부상").length * 1.6 + existingRoster.filter((player) => player.overall < 58).length * 0.12;
       const pickTradeImpact = acquiredPicks * 1.15 - lostPicks * 1.25;
       const tradeStrengthAdjustment = teamTradeStrengthAdjustments[String(team.id)] ?? 0;
-      const strengthScore = clampNumber(baseStrength + existingCoreContribution + draftImpact + prospectContribution + regularContribution - injuryPenalty + pickTradeImpact + tradeStrengthAdjustment, 28, 99);
+      const strengthScore = clampNumber(baseStrength + existingCoreContribution + draftImpact + prospectContribution + regularContribution + foreignContribution - injuryPenalty + pickTradeImpact + tradeStrengthAdjustment, 28, 99);
       const paritySwing = Math.random() * 18 - 9;
       const chaosSwing = Math.random() < 0.18 ? Math.random() * 12 - 6 : 0;
       const contenderPressure = previous?.rank && previous.rank <= 2 ? Math.random() * 4 - 2.8 : 0;
@@ -11046,6 +11904,7 @@ function simulateTeamSeason(
         draftImpact,
         prospectContribution,
         regularContribution,
+        foreignContribution,
         injuryPenalty,
         pickTradeImpact: pickTradeImpact + tradeStrengthAdjustment,
         randomSwing,
@@ -11062,6 +11921,26 @@ function simulateTeamSeason(
     ...records[index],
     nextFirstRoundPick: ranked.length - result.rank + 1,
   }));
+}
+
+function foreignTeamStrengthContribution(contracts: ForeignContract[], teamId: TeamId, seasonYear: number): number {
+  const active = contracts
+    .filter((contract) => contract.teamId === teamId && contract.status === "active" && contract.startYear <= seasonYear && contract.endYear >= seasonYear)
+    .filter((contract, index, rows) => rows.findIndex((candidate) => candidate.playerId === contract.playerId) === index)
+    .map((contract) => {
+      const player = contract.playerSnapshot;
+      if (!player) return 0;
+      const latestSeason = [...(contract.seasonHistory ?? [])]
+        .filter((season) => season.seasonYear < seasonYear)
+        .sort((left, right) => right.seasonYear - left.seasonYear)[0];
+      const effectiveOverall = latestSeason?.effectiveOverall ?? effectiveForeignOverall(player.hidden.baseOverall, player.hidden.kboAdaptation);
+      const adaptation = latestSeason?.actualAdaptation ?? player.hidden.kboAdaptation;
+      const availability = latestSeason ? clampNumber(1 - latestSeason.injuryDays / 220, 0.55, 1) : 0.92;
+      const adaptationFactor = clampNumber(0.82 + adaptation * 0.0022, 0.84, 1.04);
+      const roleFactor = ["starting-pitcher", "closer", "everyday-player"].includes(contract.currentRole ?? contract.guaranteedRole) ? 1.05 : 0.88;
+      return Math.max(0, effectiveOverall - 57) * 0.145 * availability * adaptationFactor * roleFactor;
+    });
+  return roundTo(clampNumber(active.reduce((sum, value) => sum + value, 0), 0, 13), 1);
 }
 
 function createSeasonRecords(results: TeamSeasonResult[], seasonYear: number): Array<Pick<TeamSeasonResult, "wins" | "draws" | "losses" | "winningPct">> {

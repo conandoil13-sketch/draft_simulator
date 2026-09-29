@@ -3,6 +3,7 @@ import { randomFloat, randomInt, type Rng } from "../generation/random";
 import { createForeignContract, isForeignContractActive } from "../selectors/foreignContracts";
 import type { ForeignContract, ForeignKboSeason, ForeignRetentionEvaluation, ForeignRosterDecision } from "../types/foreignContract";
 import type { ForeignPlayerCandidate, ForeignRecentStats } from "../types/foreignPlayer";
+import type { SeasonFormCycle } from "../types/player";
 import type { Team } from "../types/team";
 import { clamp, roundTo } from "../utils/math";
 
@@ -20,12 +21,17 @@ export function simulateForeignContractSeasons(
     if (!player) return contract;
     const season = simulateForeignSeason(contract, player, seasonYear, rng);
     const evaluation = evaluateForeignRetention(contract, player, season);
-    const overseasDeparture = resolveOverseasDeparture(player, season, evaluation, rng);
+    const rolePromise = evaluateRolePromise(contract, season);
+    const overseasDeparture = resolveOverseasDeparture(player, season, evaluation, rolePromise.dissatisfaction, rolePromise.status, rng);
     return {
       ...contract,
       playerSnapshot: player,
       seasonHistory: [...(contract.seasonHistory ?? []), season],
       latestRetentionEvaluation: evaluation,
+      currentRole: rolePromise.currentRole,
+      rolePromiseStatus: rolePromise.status,
+      rolePromiseNote: rolePromise.note,
+      dissatisfaction: rolePromise.dissatisfaction,
       ...(overseasDeparture ? {
         status: "overseas-departed" as const,
         endedYear: seasonYear,
@@ -63,13 +69,15 @@ export function resolveForeignRosterDecisions(
     }
 
     const team = teams.find((candidate) => candidate.id === contract.teamId);
-    const rosterPosition = contract.guaranteedRole === "closer" || contract.guaranteedRole === "bullpen" ? "RP" : contract.guaranteedRole === "starting-pitcher" ? "SP" : player.primaryPosition;
+    const activeRole = activeForeignRole(contract);
+    const rosterPosition = activeRole === "closer" || activeRole === "bullpen" ? "RP" : activeRole === "starting-pitcher" ? "SP" : player.primaryPosition;
     const need = team?.positionDepth[rosterPosition]?.need ?? 50;
     const performance = evaluation.performanceScore;
+    const dissatisfaction = contract.dissatisfaction ?? 0;
 
     if (contract.endYear <= seasonYear) {
       const baseChance = evaluation.score >= 76 ? 0.9 : evaluation.score >= 61 ? 0.67 : evaluation.score >= 45 ? 0.24 : 0.03;
-      const renewalChance = clamp(baseChance + (need - 50) * 0.0035 - Math.max(0, contract.annualSalaryUsd - 900000) / 9000000, 0.01, 0.96);
+      const renewalChance = clamp(baseChance + (need - 50) * 0.0035 - Math.max(0, contract.annualSalaryUsd - 900000) / 9000000 - dissatisfaction * 0.004, 0.01, 0.96);
       const expired = { ...contract, status: "expired" as const, endedYear: seasonYear, exitReason: "contract-complete" as const };
       if (rng.next() < renewalChance) {
         const salaryMultiplier = clamp(0.82 + evaluation.score / 155 + randomFloat(rng, -0.06, 0.07), 0.82, 1.48);
@@ -77,7 +85,7 @@ export function resolveForeignRosterDecisions(
         const renewed = createForeignContract(player, contract.teamId, seasonYear + 1, {
           years,
           annualSalaryUsd: Math.round(contract.annualSalaryUsd * salaryMultiplier / 10000) * 10000,
-          guaranteedRole: contract.guaranteedRole,
+          guaranteedRole: contract.currentRole ?? contract.guaranteedRole,
           incentivesUsd: Math.round(contract.incentivesUsd * 1.05),
         }, { previousContractId: contract.id, renewalCount: contract.renewalCount + 1 });
         renewed.seasonHistory = contract.seasonHistory;
@@ -122,14 +130,17 @@ export function resolveForeignRosterDecisions(
       });
       return { ...contract, status: "released" as const, endedYear: seasonYear, exitReason: "performance" as const };
     }
+    const roleDowngraded = contract.rolePromiseStatus === "downgraded" && contract.rolePromiseNote?.includes(`${seasonYear}시즌 종료`);
     decisions.push({
       seasonYear,
       teamId: contract.teamId,
       playerId: contract.playerId,
       playerName: player.name,
-      decision: "retained",
+      decision: roleDowngraded ? "role-downgrade" : "retained",
       score: evaluation.score,
-      summary: evaluation.score >= 61 ? "계약 기간과 시즌 성과를 고려해 다음 시즌에도 동행합니다." : "보직 필요도와 잔여 계약을 고려해 일단 잔류시켰습니다.",
+      summary: roleDowngraded
+        ? contract.rolePromiseNote ?? "보장 유예기간 종료 후 현재 보직을 재조정했습니다."
+        : evaluation.score >= 61 ? "계약 기간과 시즌 성과를 고려해 다음 시즌에도 동행합니다." : "보직 필요도와 잔여 계약을 고려해 일단 잔류시켰습니다.",
     });
     return contract;
   });
@@ -146,17 +157,88 @@ function simulateForeignSeason(contract: ForeignContract, player: ForeignPlayerC
   const ageDecline = Math.max(0, age - 32) * (0.45 + player.hidden.declineRisk * 0.9);
   const abilitySwing = randomFloat(rng, -2.8, 2.3) * (0.55 + player.hidden.volatility);
   const adjustedBaseOverall = clamp(player.hidden.baseOverall - ageDecline + abilitySwing, 42, 90);
-  const effectiveOverall = roundTo(effectiveForeignOverall(adjustedBaseOverall, actualAdaptation), 1);
-  const injuryProbability = clamp(player.hidden.injuryRisk * 0.42 + Math.max(0, age - 34) * 0.018, 0.04, 0.62);
+  const baseEffectiveOverall = effectiveForeignOverall(adjustedBaseOverall, actualAdaptation);
+  const formCycle = createForeignSeasonFormCycle(contract, player, actualAdaptation, baseEffectiveOverall, rng);
+  const cycleAverage = formCycle.points.reduce((sum, point) => sum + point.value, 0) / formCycle.points.length;
+  const effectiveOverall = roundTo(clamp(baseEffectiveOverall + (cycleAverage - 50) * 0.16, 38, 94), 1);
+  const lateCycleLow = Math.min(...formCycle.points.filter((point) => point.month >= 7).map((point) => point.value));
+  const fatigueInjuryRisk = Math.max(0, 45 - lateCycleLow) * 0.0025;
+  const injuryProbability = clamp(player.hidden.injuryRisk * 0.42 + Math.max(0, age - 34) * 0.018 + fatigueInjuryRisk, 0.04, 0.68);
   const injuryDays = rng.next() < injuryProbability ? randomInt(rng, 8, rng.next() < 0.16 ? 120 : 55) : 0;
   const stats = player.playerGroup === "pitcher"
     ? simulatePitcherSeason(contract, player, effectiveOverall, injuryDays, rng)
     : simulateHitterSeason(contract, player, effectiveOverall, injuryDays, rng);
-  return { seasonYear, age, actualAdaptation, effectiveOverall, injuryDays, stats };
+  return { seasonYear, age, actualAdaptation, effectiveOverall, injuryDays, formCycle, stats };
+}
+
+function createForeignSeasonFormCycle(
+  contract: ForeignContract,
+  player: ForeignPlayerCandidate,
+  adaptation: number,
+  effectiveOverall: number,
+  rng: Rng,
+): SeasonFormCycle {
+  const kind: SeasonFormCycle["kind"] = player.playerGroup === "pitcher" ? "pitcher" : "hitter";
+  const stamina = player.playerGroup === "pitcher"
+    ? player.pitcherTools?.stamina ?? 50
+    : (player.hitterTools?.mentality ?? 50) * 0.58 + (player.hitterTools?.speed ?? 50) * 0.22 + player.hidden.adjustmentSpeed * 0.2;
+  const volatility = clamp(player.hidden.volatility, 0.05, 1);
+  const firstSeason = (contract.seasonHistory?.length ?? 0) === 0;
+  const pattern = pickForeignCyclePattern(stamina, volatility, adaptation, firstSeason, rng);
+  const base = clamp(48 + (effectiveOverall - 65) * 0.18 + (adaptation - 55) * 0.045 + randomFloat(rng, -3.5, 3.5), 37, 67);
+  const shapes: Record<SeasonFormCycle["pattern"], number[]> = {
+    steady: [0, 1, 1, 0, -1, 0, 1, 0],
+    "early-peak": [7, 8, 5, 1, -2, -4, -2, -1],
+    "summer-slump": [2, 4, 3, -1, -8, -10, -4, 0],
+    "late-surge": [-4, -2, 0, 2, 3, 5, 8, 9],
+    volatile: [6, -5, 7, -6, 4, -7, 6, -2],
+    "stamina-fade": [4, 5, 3, 1, -3, -7, -10, -12],
+    rebound: [-7, -6, -3, 0, 3, 5, 7, 6],
+  };
+  const months = [3, 4, 5, 6, 7, 8, 9, 10] as const;
+  const adaptationShape = firstSeason && adaptation < 50 ? [-4, -3, -2, 0, 1, 2, 3, 3] : [0, 0, 0, 0, 0, 0, 0, 0];
+  const staminaShape = stamina < 47 ? [1, 1, 0, 0, -2, -4, -6, -7] : stamina >= 68 ? [0, 0, 0, 0, 1, 2, 3, 3] : [0, 0, 0, 0, 0, 0, 0, 0];
+  const points = months.map((month, index) => ({
+    month,
+    value: Math.round(clamp(base + shapes[pattern][index] + adaptationShape[index] + staminaShape[index] + randomFloat(rng, -2 - volatility * 4, 2 + volatility * 4), 25, 85)),
+  }));
+  const strongest = [...points].sort((left, right) => right.value - left.value)[0];
+  const weakest = [...points].sort((left, right) => left.value - right.value)[0];
+  const staminaSignal = Math.round(clamp(stamina + (pattern === "stamina-fade" ? -12 : pattern === "late-surge" ? 7 : 0), 20, 95));
+  const clutchSignal = Math.round(clamp(48 + (points[6].value + points[7].value - points[0].value - points[1].value) * 0.55 + (player.hitterTools?.mentality ?? player.pitcherTools?.mentality ?? 50) * 0.18 + randomFloat(rng, -7, 7), 20, 92));
+  return {
+    kind,
+    pattern,
+    points,
+    reliability: roundTo(clamp(0.58 + (contract.seasonHistory?.length ?? 0) * 0.08, 0.58, 0.9), 2),
+    staminaSignal,
+    clutchSignal,
+    report: `${firstSeason ? "KBO 첫 시즌 적응 변수를 포함한" : "최근 KBO 기록과 체력 흐름을 반영한"} ${kind === "pitcher" ? "투구" : "타격"} 사이클입니다. ${strongest.month}월 흐름이 가장 좋았고 ${weakest.month}월에 가장 크게 흔들렸습니다.`,
+  };
+}
+
+function pickForeignCyclePattern(stamina: number, volatility: number, adaptation: number, firstSeason: boolean, rng: Rng): SeasonFormCycle["pattern"] {
+  const weighted: Array<{ value: SeasonFormCycle["pattern"]; weight: number }> = [
+    { value: "steady", weight: 22 + Math.max(0, stamina - 58) * 0.35 + Math.max(0, adaptation - 65) * 0.2 },
+    { value: "early-peak", weight: 11 },
+    { value: "summer-slump", weight: 13 + Math.max(0, 52 - stamina) * 0.45 },
+    { value: "late-surge", weight: 11 + Math.max(0, adaptation - 60) * 0.25 },
+    { value: "volatile", weight: 7 + volatility * 27 + (firstSeason && adaptation < 50 ? 7 : 0) },
+    { value: "stamina-fade", weight: 8 + Math.max(0, 52 - stamina) * 0.7 },
+    { value: "rebound", weight: 9 + (firstSeason && adaptation < 58 ? 8 : 0) },
+  ];
+  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng.next() * total;
+  for (const entry of weighted) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.value;
+  }
+  return "steady";
 }
 
 function simulatePitcherSeason(contract: ForeignContract, player: ForeignPlayerCandidate, overall: number, injuryDays: number, rng: Rng): ForeignRecentStats {
-  const starter = contract.guaranteedRole === "starting-pitcher" || (contract.guaranteedRole === "flexible-pitcher" && player.primaryPosition === "SP");
+  const role = activeForeignRole(contract);
+  const starter = role === "starting-pitcher" || (role === "flexible-pitcher" && player.primaryPosition === "SP");
   const availability = clamp(1 - injuryDays / 170, 0.25, 1);
   const games = starter ? Math.round(randomFloat(rng, 25, 31) * availability) : Math.round(randomFloat(rng, 46, 68) * availability);
   const innings = roundTo((starter ? randomFloat(rng, 5.25, 6.15) : randomFloat(rng, 0.92, 1.18)) * games, 1);
@@ -170,17 +252,28 @@ function simulatePitcherSeason(contract: ForeignContract, player: ForeignPlayerC
   const winShare = clamp(0.68 - (era - 2.5) * 0.09, 0.25, 0.78);
   const wins = starter ? Math.round(decisions * winShare) : randomInt(rng, 1, Math.max(1, Math.round(games / 13)));
   const losses = starter ? Math.max(0, decisions - wins) : randomInt(rng, 0, Math.max(1, Math.round(games / 18)));
-  const closer = contract.guaranteedRole === "closer";
+  const closer = role === "closer";
+  const walks = Math.round(innings * walksPerNine / 9);
+  const strikeouts = Math.round(innings * strikeoutsPerNine / 9);
+  const hitsAllowed = Math.max(0, Math.round(whip * innings - walks));
+  const earnedRuns = Math.round(innings * era / 9);
+  const homeRunsAllowed = Math.round(innings * clamp(1.65 - stuff * 0.01, 0.35, 1.6) / 9);
+  const war = roundTo(clamp(innings * ((4.65 - era) / 4.4) / 28 + (strikeoutsPerNine - walksPerNine - 3.2) * innings / 520, -2.5, 10), 1);
   return {
     kind: "pitcher",
     games,
+    gamesStarted: starter ? games : 0,
     innings,
     wins,
     losses,
     saves: closer ? Math.round(clamp((41 - era * 3.2 + randomFloat(rng, -5, 6)) * availability, 0, 45)) : 0,
     holds: !starter && !closer ? Math.round(clamp((27 - era * 2 + randomFloat(rng, -5, 7)) * availability, 0, 34)) : 0,
-    strikeouts: Math.round(innings * strikeoutsPerNine / 9),
-    walks: Math.round(innings * walksPerNine / 9),
+    strikeouts,
+    walks,
+    hitsAllowed,
+    homeRunsAllowed,
+    earnedRuns,
+    war,
     era,
     whip,
     strikeoutsPerNine,
@@ -192,7 +285,8 @@ function simulatePitcherSeason(contract: ForeignContract, player: ForeignPlayerC
 
 function simulateHitterSeason(contract: ForeignContract, player: ForeignPlayerCandidate, overall: number, injuryDays: number, rng: Rng): ForeignRecentStats {
   const availability = clamp(1 - injuryDays / 170, 0.2, 1);
-  const roleRate = contract.guaranteedRole === "everyday-player" ? 1 : contract.guaranteedRole === "platoon-player" ? 0.68 : 0.42;
+  const role = activeForeignRole(contract);
+  const roleRate = role === "everyday-player" ? 1 : role === "platoon-player" ? 0.68 : 0.42;
   const games = Math.round(randomFloat(rng, 132, 144) * availability * roleRate);
   const plateAppearances = Math.max(20, Math.round(games * randomFloat(rng, 3.65, 4.35)));
   const discipline = player.hitterTools?.discipline ?? overall;
@@ -209,15 +303,25 @@ function simulateHitterSeason(contract: ForeignContract, player: ForeignPlayerCa
   const triples = Math.round(plateAppearances * clamp((player.hitterTools?.speed ?? 50) * 0.000055, 0.001, 0.007));
   const onBasePercentage = roundTo(clamp(average + walkRate * 0.72 + 0.012, average + 0.025, 0.47), 3);
   const sluggingPercentage = roundTo(clamp(average + doubles / atBats + triples * 2 / atBats + homeRuns * 3 / atBats, 0.27, 0.72), 3);
+  const walks = Math.round(plateAppearances * walkRate);
+  const strikeouts = Math.round(plateAppearances * strikeoutRate);
+  const stolenBases = Math.round(plateAppearances * clamp((player.hitterTools?.speed ?? 45) * 0.00028 - 0.008, 0, 0.025));
+  const caughtStealing = Math.round(stolenBases * clamp(0.42 - (player.hitterTools?.speed ?? 45) * 0.003, 0.12, 0.34));
+  const runs = Math.round((hits + walks) * clamp(0.22 + (player.hitterTools?.speed ?? 45) * 0.003, 0.28, 0.52));
+  const fieldingValue = roundTo(((player.hitterTools?.defense ?? 50) - 50) * games / 720 + randomFloat(rng, -1.8, 1.8), 1);
+  const war = roundTo(clamp((onBasePercentage + sluggingPercentage - 0.71) * plateAppearances / 32 + fieldingValue * 0.12 + (stolenBases - caughtStealing * 1.6) * 0.025, -2.5, 9.5), 1);
   return {
     kind: "hitter",
     games,
     plateAppearances,
     atBats,
+    runs,
     hits,
     doubles,
     triples,
     runsBattedIn: Math.round(homeRuns * 1.75 + hits * 0.23 + randomFloat(rng, 0, 12)),
+    walks,
+    strikeouts,
     average,
     onBasePercentage,
     sluggingPercentage,
@@ -225,7 +329,10 @@ function simulateHitterSeason(contract: ForeignContract, player: ForeignPlayerCa
     homeRuns,
     strikeoutRate: roundTo(strikeoutRate, 3),
     walkRate: roundTo(walkRate, 3),
-    stolenBases: Math.round(plateAppearances * clamp((player.hitterTools?.speed ?? 45) * 0.00028 - 0.008, 0, 0.025)),
+    stolenBases,
+    caughtStealing,
+    fieldingValue,
+    war,
   };
 }
 
@@ -243,7 +350,8 @@ function evaluateForeignRetention(contract: ForeignContract, player: ForeignPlay
     if (stats.ops >= 0.86) reasons.push("중심 타선 생산력 확인");
     else if (stats.ops < 0.75) reasons.push("장타·출루 생산성 부족");
   } else {
-    const starter = contract.guaranteedRole === "starting-pitcher" || contract.guaranteedRole === "flexible-pitcher";
+    const role = activeForeignRole(contract);
+    const starter = role === "starting-pitcher" || role === "flexible-pitcher";
     const eraTarget = starter ? 3.55 : 3.75;
     const eraScore = clamp(62 - (stats.era - eraTarget) * 28, 5, 100);
     const workloadTarget = starter ? 155 : 58;
@@ -274,8 +382,55 @@ function evaluateForeignRetention(contract: ForeignContract, player: ForeignPlay
 
 function foreignSeasonBelowExpectation(stats: ForeignRecentStats, contract: ForeignContract): boolean {
   if (stats.kind === "hitter") return stats.average < 0.27 || stats.ops < 0.75;
-  const starter = contract.guaranteedRole === "starting-pitcher" || contract.guaranteedRole === "flexible-pitcher";
+  const role = activeForeignRole(contract);
+  const starter = role === "starting-pitcher" || role === "flexible-pitcher";
   return stats.era > (starter ? 4.4 : 4.6) || stats.whip > 1.5;
+}
+
+function activeForeignRole(contract: ForeignContract) {
+  return contract.currentRole ?? contract.guaranteedRole;
+}
+
+function evaluateRolePromise(contract: ForeignContract, season: ForeignKboSeason): {
+  status: NonNullable<ForeignContract["rolePromiseStatus"]>;
+  currentRole: ForeignContract["guaranteedRole"];
+  dissatisfaction: number;
+  note: string;
+} {
+  const role = activeForeignRole(contract);
+  const protectedRole = contract.guaranteedRole === "starting-pitcher" || contract.guaranteedRole === "closer" || contract.guaranteedRole === "everyday-player";
+  if (!protectedRole) {
+    return { status: contract.rolePromiseStatus ?? "fulfilled", currentRole: role, dissatisfaction: Math.max(0, (contract.dissatisfaction ?? 0) - 4), note: contract.rolePromiseNote ?? "보직 경쟁 계약" };
+  }
+  if (contract.rolePromiseStatus === "violated") {
+    return { status: "violated", currentRole: role, dissatisfaction: Math.min(100, (contract.dissatisfaction ?? 0) + 18), note: "구단이 보장 유예기간 중 약속한 보직을 지키지 않아 선수 측 불만이 커졌습니다." };
+  }
+  const poor = foreignSeasonBelowExpectation(season.stats, contract);
+  const graceComplete = season.seasonYear >= (contract.rolePromiseGraceUntilYear ?? contract.startYear);
+  if (graceComplete && poor) {
+    const currentRole = contract.guaranteedRole === "everyday-player" ? "platoon-player"
+      : contract.guaranteedRole === "closer" ? "bullpen"
+        : "flexible-pitcher";
+    return {
+      status: "downgraded",
+      currentRole,
+      dissatisfaction: Math.min(100, (contract.dissatisfaction ?? 0) + 16),
+      note: `${season.seasonYear}시즌 종료 · 보장 기회를 부여했으나 기대 성적에 미달해 ${rolePromiseDowngradeLabel(currentRole)}으로 재조정`,
+    };
+  }
+  return {
+    status: "fulfilled",
+    currentRole: contract.guaranteedRole,
+    dissatisfaction: Math.max(0, (contract.dissatisfaction ?? 0) - 8),
+    note: `${season.seasonYear}시즌 보장 보직 이행 완료`,
+  };
+}
+
+function rolePromiseDowngradeLabel(role: ForeignContract["guaranteedRole"]): string {
+  if (role === "platoon-player") return "플래툰";
+  if (role === "flexible-pitcher") return "스윙맨";
+  if (role === "bullpen") return "불펜";
+  return "경쟁 보직";
 }
 
 function foreignDecisionPerformanceSummary(contract: ForeignContract): string {
@@ -291,9 +446,14 @@ function resolveOverseasDeparture(
   player: ForeignPlayerCandidate,
   season: ForeignKboSeason,
   evaluation: ForeignRetentionEvaluation,
+  dissatisfaction: number,
+  promiseStatus: ForeignContract["rolePromiseStatus"],
   rng: Rng,
 ): "MLB" | "AAA" | "NPB" | undefined {
-  const probability = evaluation.overseasReturnProbability ?? 0;
+  const grievanceExitChance = evaluation.performanceScore >= 60
+    ? dissatisfaction * 0.0025 + (promiseStatus === "violated" ? 0.12 : 0)
+    : 0;
+  const probability = clamp((evaluation.overseasReturnProbability ?? 0) + grievanceExitChance, 0, 0.68);
   if (probability <= 0 || rng.next() >= probability) return undefined;
   if (evaluation.performanceScore >= 90 && season.effectiveOverall >= 78 && rng.next() < 0.58) return "MLB";
   const npbAffinity = player.nationality === "Japan" || ["NPB", "NPB Futures", "Japanese Industrial"].includes(player.formerLeague);

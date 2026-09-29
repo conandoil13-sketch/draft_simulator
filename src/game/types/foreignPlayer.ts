@@ -57,6 +57,7 @@ export type ForeignHitterTools = {
 export type ForeignPitcherRecentStats = {
   kind: "pitcher";
   games: number;
+  gamesStarted?: number;
   innings: number;
   wins: number;
   losses: number;
@@ -68,6 +69,10 @@ export type ForeignPitcherRecentStats = {
   whip: number;
   strikeoutsPerNine: number;
   walksPerNine: number;
+  hitsAllowed?: number;
+  homeRunsAllowed?: number;
+  earnedRuns?: number;
+  war?: number;
   averageVelocityKph: number;
   maxVelocityKph: number;
 };
@@ -77,10 +82,13 @@ export type ForeignHitterRecentStats = {
   games: number;
   plateAppearances: number;
   atBats: number;
+  runs?: number;
   hits: number;
   doubles: number;
   triples: number;
   runsBattedIn: number;
+  walks?: number;
+  strikeouts?: number;
   average: number;
   onBasePercentage: number;
   sluggingPercentage: number;
@@ -89,6 +97,9 @@ export type ForeignHitterRecentStats = {
   strikeoutRate: number;
   walkRate: number;
   stolenBases: number;
+  caughtStealing?: number;
+  fieldingValue?: number;
+  war?: number;
 };
 
 export type ForeignRecentStats = ForeignPitcherRecentStats | ForeignHitterRecentStats;

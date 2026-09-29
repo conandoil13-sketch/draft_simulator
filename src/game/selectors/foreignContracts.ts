@@ -2,6 +2,7 @@ import type { ForeignContractId, ForeignPlayerId, TeamId, Year } from "../types/
 import type {
   ForeignContract,
   ForeignContractTerms,
+  ForeignGuaranteedRole,
   ForeignRosterUsage,
   ForeignRosterValidation,
 } from "../types/foreignContract";
@@ -81,9 +82,18 @@ export function createForeignContract(
     incentivesUsd,
     totalValueUsd: annualSalaryUsd * years + signingBonusUsd + incentivesUsd,
     guaranteedRole: terms.guaranteedRole,
+    currentRole: terms.guaranteedRole,
+    rolePromiseStatus: isProtectedForeignRole(terms.guaranteedRole) ? "protected" : "fulfilled",
+    rolePromiseGraceUntilYear: isProtectedForeignRole(terms.guaranteedRole) ? signedYear : undefined,
+    rolePromiseNote: isProtectedForeignRole(terms.guaranteedRole) ? `${signedYear}시즌 보직 기회 보장` : "보직 경쟁 계약",
+    dissatisfaction: 0,
     status: "active",
     renewalCount: renewal?.renewalCount ?? 0,
     previousContractId: renewal?.previousContractId,
     playerSnapshot: candidate,
   };
+}
+
+function isProtectedForeignRole(role: ForeignGuaranteedRole): boolean {
+  return role === "starting-pitcher" || role === "closer" || role === "everyday-player";
 }

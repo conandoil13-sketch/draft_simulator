@@ -2118,6 +2118,316 @@ button.roster-member:hover {
   border-color: #aac6df;
 }
 
+.kbo-roster-view {
+  display: grid;
+  gap: 14px;
+}
+
+.kbo-roster-summary {
+  background: #f4f6f8;
+  border: 1px solid #d6dce3;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 0.7fr)) minmax(250px, 1.8fr);
+}
+
+.kbo-roster-summary > span {
+  border-right: 1px solid #d6dce3;
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+.kbo-roster-summary > span:last-child {
+  border-right: 0;
+}
+
+.kbo-roster-summary small {
+  color: #68727e;
+  font-size: 11px;
+}
+
+.kbo-roster-summary strong {
+  font-size: 13px;
+}
+
+.kbo-roster-block {
+  border-top: 2px solid #758392;
+  padding-top: 8px;
+}
+
+.kbo-roster-block-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.kbo-roster-block-head h3,
+.kbo-roster-block-head p {
+  margin: 0;
+}
+
+.kbo-roster-block-head h3 {
+  font-size: 15px;
+}
+
+.kbo-roster-block-head p {
+  color: #68727e;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.roster-source-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.roster-source-legend span {
+  border: 1px solid #d8dee6;
+  font-size: 10px;
+  padding: 3px 6px;
+}
+
+.roster-source-legend span[data-source="drafted"] {
+  background: #edf7f0;
+  border-color: #b9d9c0;
+}
+
+.roster-source-legend span[data-source="existing"] {
+  background: #f8fafc;
+}
+
+.roster-source-legend span[data-source="foreign"] {
+  background: #eef4fb;
+  border-color: #aac6df;
+}
+
+.kbo-depth-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+}
+
+.kbo-depth-group {
+  border: 1px solid #d6dce3;
+  min-width: 0;
+  padding: 6px;
+}
+
+.kbo-depth-group[data-position="SP"],
+.kbo-depth-group[data-position="RP"] {
+  grid-column: span 2;
+}
+
+.kbo-depth-group > header {
+  align-items: center;
+  border-bottom: 1px solid #e1e5ea;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  padding-bottom: 5px;
+}
+
+.kbo-depth-group > header b {
+  color: #68727e;
+  font-size: 10px;
+}
+
+.kbo-depth-members {
+  display: grid;
+  gap: 4px;
+}
+
+.kbo-depth-members .roster-member,
+.kbo-inactive-list .roster-member {
+  margin-bottom: 0;
+}
+
+.kbo-depth-grid-secondary {
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+}
+
+.kbo-depth-grid-secondary .kbo-depth-group[data-position="SP"],
+.kbo-depth-grid-secondary .kbo-depth-group[data-position="RP"] {
+  grid-column: auto;
+}
+
+.kbo-inactive-list {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(190px, 1fr));
+}
+
+@media (max-width: 1180px) {
+  .kbo-roster-summary {
+    grid-template-columns: repeat(4, minmax(100px, 1fr));
+  }
+
+  .kbo-roster-summary > span:last-child {
+    border-right: 0;
+    border-top: 1px solid #d6dce3;
+    grid-column: 1 / -1;
+  }
+
+  .kbo-depth-grid,
+  .kbo-depth-grid-secondary {
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+  }
+
+  .kbo-inactive-list {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .kbo-roster-summary {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .kbo-roster-summary > span:nth-child(even) {
+    border-right: 0;
+  }
+
+  .kbo-depth-grid,
+  .kbo-depth-grid-secondary,
+  .kbo-inactive-list {
+    grid-template-columns: 1fr;
+  }
+
+  .kbo-depth-group[data-position="SP"],
+  .kbo-depth-group[data-position="RP"] {
+    grid-column: auto;
+  }
+
+  .kbo-roster-block-head {
+    display: grid;
+  }
+}
+
+.season-progress-backdrop {
+  z-index: 120;
+}
+
+.season-progress-modal {
+  background: #fff;
+  border: 1px solid #aeb8c4;
+  box-shadow: 0 18px 48px rgb(22 31 41 / 22%);
+  display: grid;
+  gap: 12px;
+  max-height: min(820px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 18px;
+  width: min(1180px, calc(100vw - 48px));
+}
+
+.season-progress-track {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(90px, 1fr));
+}
+
+.season-progress-track span {
+  background: #f1f3f6;
+  border-bottom: 3px solid #cfd5dc;
+  color: #68727e;
+  font-size: 11px;
+  padding: 7px 5px;
+  text-align: center;
+}
+
+.season-progress-track span[data-active="true"] {
+  background: #edf4f8;
+  border-color: #477b9e;
+  color: #243746;
+}
+
+.season-progress-track span[data-current="true"] {
+  font-weight: 700;
+}
+
+.season-progress-columns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
+}
+
+.season-progress-columns > section,
+.season-progress-columns > aside,
+.season-result-news {
+  border: 1px solid #d9dee5;
+  min-height: 180px;
+  padding: 10px;
+}
+
+.season-progress-log,
+.season-alert-list,
+.season-result-news {
+  display: grid;
+  gap: 6px;
+}
+
+.season-progress-log article,
+.season-alert-list article,
+.season-result-news article {
+  border-bottom: 1px solid #e4e8ed;
+  padding: 6px 4px;
+}
+
+.season-progress-log span,
+.season-alert-list span,
+.season-result-news span {
+  color: #68727e;
+  font-size: 11px;
+}
+
+.season-progress-log p,
+.season-alert-list p,
+.season-result-news p {
+  margin: 3px 0 0;
+}
+
+.season-alert-list article[data-priority="decision"] {
+  background: #fff1f1;
+  border-left: 3px solid #b53b3b;
+  padding-left: 8px;
+}
+
+.season-alert-list article[data-priority="confirm"] {
+  background: #fff8e8;
+  border-left: 3px solid #b17a19;
+  padding-left: 8px;
+}
+
+.season-alert-list article[data-resolved="true"] {
+  opacity: 0.58;
+}
+
+.season-loading-line {
+  color: #477b9e;
+  font-weight: 700;
+}
+
+.season-progress-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .season-progress-modal {
+    width: calc(100vw - 20px);
+  }
+
+  .season-progress-track {
+    grid-template-columns: repeat(4, minmax(80px, 1fr));
+  }
+
+  .season-progress-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 .roster-member small {
   color: #66717d;
   font-size: 11px;
